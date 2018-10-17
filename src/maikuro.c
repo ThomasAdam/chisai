@@ -3,9 +3,10 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-
+#include <unistd.h>
 
 /*
  * Function: die
@@ -27,11 +28,11 @@ die(char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
-
 /* Variables */
+char message[HUGE];
+struct sockaddr_un sock_addr;
 int sock_fd;
 const char *sock_path;
-struct sockaddr_un sock_addr;
 
 /*
  * Function: main
@@ -62,7 +63,6 @@ main(int argc, char* argv[])
     /* Get socket path */
     sock_path = getenv("CHISAI_SOCKET");
     
-
     if (sock_path) {
         strncpy(sock_addr.sun_path, sock_path, sizeof(sock_addr.sun_path));
     } else {
@@ -73,4 +73,17 @@ main(int argc, char* argv[])
     if (connect(sock_fd, (struct sock_addr*)&sock_addr, sizeof(sock_addr)) < 0)  {
         die("%s: failed to connect to socket\n", argv[0]);
     }    
+ 
+    /* Concatenate arguments into one string */
+    strcpy(message, argv[1]);
+    for (int i = 2; i < argc; i ++)
+    {
+        strcat(message, " ");
+        strcat(message, argv[i]);
+    }
+    
+    /* Send message to Chisai */
+    if (write(sock_fd, message, sizeof(message)) < 0) {
+        die("%s: failed to send message to chisai\n", argv[0]);
+    }
 }
