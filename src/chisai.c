@@ -16,6 +16,7 @@
 /* Variables */
 struct sockaddr_un sock_addr;
 int sock_fd;
+int client_fd;
 const char *sock_path;
 
 /* Function Signatures */
@@ -69,6 +70,11 @@ initialize(void)
     if (bind(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
         die("chisai: failed to bind socket\n");       
     } 
+    
+    /* Listen to the socket */
+    if (listen(sock_fd, 1) < 0) {
+        die("chisai: socket listen failed");
+    }
 }
 
 /*
@@ -89,9 +95,9 @@ main(void)
     /* Event Loop */
     while(true)
     {   
-        /* Listen to the socket */
-        if (listen(sock_fd, 1) < 0) {
-            die("chisai: socket listen failed");
+        /* Accept client socket */
+        if ((client_fd = accept(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr))) < 0) {
+            die("chisai: failed to accept client socket");
         }
     }
 }
