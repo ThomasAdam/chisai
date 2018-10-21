@@ -4,10 +4,19 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 #include <xcb/xcb.h>
 
 /* Macros */
 #define MAX(a, b) ((a > b) ? (a) : (b))
+
+/* Variables */
+struct sockaddr_un sock_addr;
+int sock_fd;
+const char *sock_path;
 
 /* Function Signatures */
 
@@ -32,7 +41,55 @@ die(char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
-/* TODO: Connect to x function and socket and all that pizzaz and all the individual functoins themselves feelsbadman */
+/*
+ * Function: opensocket
+ * --------------------
+ * Opens a connection to the client's socket
+ *
+ * returns: nothing, will die if failed to connect
+ */
+static void
+opensocket(void)
+{
+    if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+        die("chisai: failed to open socket\n");
+    }
+}
+
+/*
+ * Function: getsocketpath
+ * -----------------------
+ * Initializes the socket path
+ *
+ * returns: nothing
+ */
+static void
+getsocketpath(void)
+{
+    sock_path = getenv("CHISAI_SOCKET");
+
+    if (sock_path) {
+        strncpy(sock_addr.sun_path, sock_path, sizeof(sock_addr.sun_path));
+    } else {
+        strncpy(sock_addr.sun_path, "/tmp/chisai.sock", sizeof(sock_addr.sun_path));G
+    }
+}
+
+/*
+ * Function: connectsocket
+ * -----------------------
+ * Connects to the socket to start reading
+ *
+ * return: nothing
+ */
+static void
+connectsocket(void)
+{
+    if (connect(sock_fd, (struct sock_addr*)&sock_addr, sizeof(sock_addr)) < 0) {
+        die("chisai: failed to connect to socket\n");
+    }
+}
+
 /*
  * Function: main
  * --------------
@@ -44,6 +101,12 @@ die(char *fmt, ...)
 int
 main(void)
 {
+    /* Setup */
+    opensocket();
+    getsocketpath();
+    connectsocket();
+    
+    /* Event Loop */
     while(true)
     {
         
