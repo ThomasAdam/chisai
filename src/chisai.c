@@ -42,55 +42,34 @@ die(char *fmt, ...)
 }
 
 /*
- * Function: opensocket
+ * Function: initialize
  * --------------------
- * Opens a connection to the client's socket
+ * Creates and 
  *
- * returns: nothing, will die if failed to connect
+ * return: nothing
  */
 static void
-opensocket(void)
+initialize(void)
 {
-    if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-        die("chisai: failed to open socket\n");
-    }
-}
-
-/*
- * Function: getsocketpath
- * -----------------------
- * Initializes the socket path
- *
- * returns: nothing
- */
-static void
-getsocketpath(void)
-{
+    /* Get socket path */
     sock_path = getenv("CHISAI_SOCKET");
 
     if (sock_path) {
         strncpy(sock_addr.sun_path, sock_path, sizeof(sock_addr.sun_path));
     } else {
-        strncpy(sock_addr.sun_path, "/tmp/chisai.sock", sizeof(sock_addr.sun_path));G
+        strncpy(sock_addr.sun_path, "/tmp/chisai.sock", sizeof(sock_addr.sun_path));
     }
+
+    /* Create socket */
+    if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+        die("chisai: failed to open socket\n");
+    }
+
+
 }
 
 /*
- * Function: connectsocket
- * -----------------------
- * Connects to the socket to start reading
  *
- * return: nothing
- */
-static void
-connectsocket(void)
-{
-    if (connect(sock_fd, (struct sock_addr*)&sock_addr, sizeof(sock_addr)) < 0) {
-        die("chisai: failed to connect to socket\n");
-    }
-}
-
-/*
  * Function: main
  * --------------
  * Reads messages from socket and executes
@@ -102,9 +81,7 @@ int
 main(void)
 {
     /* Setup */
-    opensocket();
-    getsocketpath();
-    connectsocket();
+    initialize();
     
     /* Event Loop */
     while(true)
