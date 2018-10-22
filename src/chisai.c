@@ -1,5 +1,6 @@
 /* Chisai - Lightweight, floating WM */
 /* Includes */
+#include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@ struct sockaddr_un sock_addr;
 int sock_fd;
 int client_fd;
 const char *sock_path;
+char message[BUFSIZ];
 
 /* Function Signatures */
 
@@ -96,8 +98,12 @@ main(void)
     while(true)
     {   
         /* Accept client socket */
-        if ((client_fd = accept(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr))) < 0) {
+        if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
             die("chisai: failed to accept client socket");
+        }
+
+        if (read(client_fd, message, sizeof(message)) > 0) {
+            printf("%s", message);
         }
     }
 }

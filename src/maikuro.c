@@ -1,5 +1,6 @@
 /* Maikuro - Chisai's Client */
 /* Imports */
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,7 @@ die(char *fmt, ...)
 }
 
 /* Variables */
-char message[HUGE];
+char message[BUFSIZ];;
 struct sockaddr_un sock_addr;
 int sock_fd;
 const char *sock_path;
@@ -76,7 +77,7 @@ main(int argc, char* argv[])
  
     /* Concatenate arguments into one string */
     strcpy(message, argv[1]);
-    for (int i = 2; i < argc; i ++)
+    for (int i = 2; i < argc; i++)
     {
         strcat(message, " ");
         strcat(message, argv[i]);
