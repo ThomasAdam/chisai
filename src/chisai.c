@@ -71,7 +71,7 @@ initialize(void)
     
     sock_addr.sun_family = AF_UNIX;
     
-    unlink(sock_path);
+    unlink(sock_addr.sun_path);
 
     /* Bind socket */
     if (bind(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
