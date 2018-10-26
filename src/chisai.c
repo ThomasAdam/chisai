@@ -56,6 +56,7 @@ initialize(void)
 {
     /* Get socket path */
     sock_path = getenv("CHISAI_SOCKET");
+    memset(&sock_addr, 0, sizeof(sock_addr));
 
     if (sock_path) {
         strncpy(sock_addr.sun_path, sock_path, sizeof(sock_addr.sun_path));
@@ -67,9 +68,12 @@ initialize(void)
     if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
         die("chisai: failed to open socket\n");
     }
+    
+    sock_addr.sun_family = AF_UNIX;
 
     /* Bind socket */
     if (bind(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
+        perror("Shit went worng");
         die("chisai: failed to bind socket\n");       
     } 
     
