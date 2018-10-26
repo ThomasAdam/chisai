@@ -70,10 +70,12 @@ initialize(void)
     }
     
     sock_addr.sun_family = AF_UNIX;
+    
+    unlink(sock_path);
 
     /* Bind socket */
     if (bind(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
-        perror("Shit went worng");
+        perror("Sjo");
         die("chisai: failed to bind socket\n");       
     } 
     
