@@ -10,28 +10,27 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <xcb/xcb.h>
-#include <xcb/xcb_aux.h>
 
 /* Macros */
 #define MAX(a, b) ((a > b) ? (a) : (b))
 
 /* Socket Variables */
-struct sockaddr_un sock_addr;
-int sock_fd;
-int client_fd;
-int message_length;
-const char *sock_path;
-char message[BUFSIZ];
+/* TODO: Make these all local */
+static int sock_fd;
+static int client_fd;
+static const char *sock_path;
 
 /* XCB Variables */
 static xcb_connection_t *conn;
 static xcb_screen_t *scr;
+static xcb_window_t root_win;
 
 /* Function Signatures */
 static void die(char *fmt, ...);
 static void initialize(void);
 static void init_xcb(xcb_connection_t **con);
 static void kill_xcb(xcb_connection_t **con);
+static void get_screen(xcb_connection_t *con, xcb_screen_t **scr);
 
 
 /*
@@ -54,6 +53,7 @@ die(char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
+
 /*
  * Function: initialize
  * --------------------
@@ -64,6 +64,8 @@ die(char *fmt, ...)
 static void
 initialize(void)
 {
+
+    struct sockaddr_un sock_addr;
     /* Get socket path */
     sock_path = getenv("CHISAI_SOCKET");
     memset(&sock_addr, 0, sizeof(sock_addr));
@@ -95,6 +97,7 @@ initialize(void)
     }
 }
 
+
 /*
  * Function: init_xcb
  * ------------------
@@ -111,6 +114,7 @@ init_xcb(xcb_connection_t **con)
     }
 }
 
+
 /*
  * Function: get_screen
  * --------------------
@@ -123,15 +127,25 @@ get_screen(xcb_connection_t *con, xcb_screen_t **scr)
 {
 	*scr = xcb_setup_roots_iterator(xcb_get_setup(con)).data;
 	if (*scr == NULL)
-		errx(1, "unable to retrieve screen informations");
+		die("chisai: unable to retrieve screen informations");
 }
 
+
+/*
+ * Function: kill_xcb
+ * ------------------
+ * Kills the X connection
+ *
+ * returns: nothing
+ */
 void
 kill_xcb(xcb_connection_t **con)
 {
     if (*con)
         xcb_disconnect(*con);
 }
+
+
 /*
  *
  * Function: main
@@ -144,10 +158,16 @@ kill_xcb(xcb_connection_t **con)
 int
 main(void)
 {
+    /* Local variables */
+    char message[BUFSIZ];
+    int message_length;
+
     /* Setup socket and X */
     initialize();
     init_xcb(&conn);
     get_screen(conn, &scr);
+
+    root_win = scr->root;
 
     /* Event Loop */
     while(true)
@@ -159,7 +179,6 @@ main(void)
         
         /* Read message and execute */
         if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
-            xcb_aux_sync(conn);
             message[message_length] = '\0';
 
             // Quit the window manager
@@ -175,4 +194,3 @@ main(void)
     /* Kill X connection */
     kill_xcb(&conn);
 }
-
