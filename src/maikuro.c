@@ -31,7 +31,7 @@ die(char *fmt, ...)
 
 /* Variables */
 char message[BUFSIZ];;
-struct sockaddr_un sock_addr;
+struct sockaddr_un sock_address;
 int sock_fd;
 const char *sock_path;
 
@@ -59,19 +59,19 @@ main(int argc, char* argv[])
 	    die("%s: failed to open socket\n", argv[0]);
     }
 
-    sock_addr.sun_family = AF_UNIX;
+    sock_address.sun_family = AF_UNIX;
 
     /* Get socket path */
     sock_path = getenv("CHISAI_SOCKET");
     
     if (sock_path) {
-        strncpy(sock_addr.sun_path, sock_path, sizeof(sock_addr.sun_path));
+        strncpy(sock_address.sun_path, sock_path, sizeof(sock_address.sun_path));
     } else {
-        strncpy(sock_addr.sun_path, "/tmp/chisai.sock", sizeof(sock_addr.sun_path));
+        strncpy(sock_address.sun_path, "/tmp/chisai.sock", sizeof(sock_address.sun_path));
     }
 
     /* Connect to Chisai socket */
-    if (connect(sock_fd, (struct sock_addr*)&sock_addr, sizeof(sock_addr)) < 0)  {
+    if (connect(sock_fd, (struct sockaddr*)&sock_address, sizeof(sock_address)) < 0)  {
         die("%s: failed to connect to socket\n", argv[0]);
     }    
  
