@@ -10,11 +10,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <xcb/xcb.h>
+#include <xcb/xcb_aux.h>
 
 /* Macros */
 #define MAX(a, b) ((a > b) ? (a) : (b))
 
-/* Variables */
+/* Socket Variables */
 struct sockaddr_un sock_addr;
 int sock_fd;
 int client_fd;
@@ -22,9 +23,17 @@ int message_length;
 const char *sock_path;
 char message[BUFSIZ];
 
-/* Function Signatures */
+/* XCB Variables */
+static xcb_connection_t *conn;
+static xcb_screen_t *scr;
 
-/* Helper Functions */
+/* Function Signatures */
+static void die(char *fmt, ...);
+static void initialize(void);
+static void init_xcb(xcb_connection_t **con);
+static void kill_xcb(xcb_connection_t **con);
+
+
 /*
  * Function: die
  * -------------
@@ -87,6 +96,43 @@ initialize(void)
 }
 
 /*
+ * Function: init_xcb
+ * ------------------
+ * Initialize X connection
+ *
+ * returns: nothing
+ */
+void
+init_xcb(xcb_connection_t **con)
+{
+    *con = xcb_connect(NULL, NULL);
+    if (xcb_connection_has_error(*con)) {
+        die("chisai: failed to connect to xcb");
+    }
+}
+
+/*
+ * Function: get_screen
+ * --------------------
+ * Gets the current screen the user is on
+ *
+ * returns: nothing
+ */
+void
+get_screen(xcb_connection_t *con, xcb_screen_t **scr)
+{
+	*scr = xcb_setup_roots_iterator(xcb_get_setup(con)).data;
+	if (*scr == NULL)
+		errx(1, "unable to retrieve screen informations");
+}
+
+void
+kill_xcb(xcb_connection_t **con)
+{
+    if (*con)
+        xcb_disconnect(*con);
+}
+/*
  *
  * Function: main
  * --------------
@@ -98,9 +144,11 @@ initialize(void)
 int
 main(void)
 {
-    /* Setup */
+    /* Setup socket and X */
     initialize();
-    
+    init_xcb(&conn);
+    get_screen(conn, &scr);
+
     /* Event Loop */
     while(true)
     {   
@@ -108,12 +156,23 @@ main(void)
         if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
             die("chisai: failed to accept client socket");
         }
-
+        
+        /* Read message and execute */
         if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
+            xcb_aux_sync(conn);
             message[message_length] = '\0';
+
+            // Quit the window manager
+            if (strcmp(message, "quit") == 0) {
+                break;
+            }
+
             printf("%s\n", message);
             fflush(stdout);
         }
     }
+    
+    /* Kill X connection */
+    kill_xcb(&conn);
 }
 
