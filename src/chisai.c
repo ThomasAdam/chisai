@@ -18,6 +18,7 @@
 struct sockaddr_un sock_addr;
 int sock_fd;
 int client_fd;
+int message_length;
 const char *sock_path;
 char message[BUFSIZ];
 
@@ -108,8 +109,10 @@ main(void)
             die("chisai: failed to accept client socket");
         }
 
-        if (read(client_fd, message, sizeof(message)) > 0) {
-            printf("%s", message);
+        if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
+            message[message_length] = '\0';
+            printf("%s\n", message);
+            fflush(stdout);
         }
     }
 }
