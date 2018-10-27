@@ -14,6 +14,12 @@
 /* Macros */
 #define MAX(a, b) ((a > b) ? (a) : (b))
 
+/* Modifiers */
+#define SUPER	XCB_MOD_MASK_4
+#define ALT		XCB_MOD_MASK_1
+#define CTRL	XCB_MOD_MASK_CONTROL
+#define SHIFT	XCB_MOD_MASK_SHIFT
+
 /* Socket Variables */
 /* TODO: Make these all local */
 static int sock_fd;
