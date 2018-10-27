@@ -1,5 +1,6 @@
 /* Chisai - Lightweight, floating WM */
 /* Includes */
+#include <err.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -19,6 +20,7 @@
 #define ALT		XCB_MOD_MASK_1
 #define CTRL	XCB_MOD_MASK_CONTROL
 #define SHIFT	XCB_MOD_MASK_SHIFT
+#define MOD     SUPER
 
 /* Socket Variables */
 /* TODO: Make these all local */
@@ -27,51 +29,43 @@ static int client_fd;
 static const char *sock_path;
 
 /* XCB Variables */
-static xcb_connection_t *conn;
-static xcb_screen_t *scr;
-static xcb_window_t root_win;
+static xcb_connection_t *connection;
+static xcb_screen_t *screen;
+static xcb_window_t focused_window;
 
 /* Function Signatures */
-static void die(char *fmt, ...);
-static void initialize(void);
-static void init_xcb(xcb_connection_t **con);
-static void kill_xcb(xcb_connection_t **con);
-static void get_screen(xcb_connection_t *con, xcb_screen_t **scr);
-
+static void cleanup(void);
+static int socket_deploy(void);
+static int x_deploy(void);
 
 /*
- * Function: die
- * -------------
- * Returns the message and exists with an error
+ * Function: cleanup
+ * -----------------
+ * Cleans up past X connection
  *
- * fmt: Error message to return
- * ...: Discard the rest of the arguments
- *
- * returns: nothing, just exists the file with the error
+ * returns: nothing
  */
 static void
-die(char *fmt, ...)
+cleanup(void)
 {
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    exit(EXIT_FAILURE);
+    if (connection != NULL) {
+        xcb_disconnect(connection);
+    }
 }
 
 
 /*
- * Function: initialize
- * --------------------
- * Creates and 
+ * Function: socket_deploy
+ * -----------------------
+ * Connects to the socket and starts listening
  *
  * return: nothing
  */
-static void
-initialize(void)
+static int
+socket_deploy(void)
 {
-
     struct sockaddr_un sock_addr;
+
     /* Get socket path */
     sock_path = getenv("CHISAI_SOCKET");
     memset(&sock_addr, 0, sizeof(sock_addr));
@@ -84,7 +78,7 @@ initialize(void)
 
     /* Create socket */
     if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-        die("chisai: failed to open socket\n");
+        return -1;
     }
     
     sock_addr.sun_family = AF_UNIX;
@@ -93,62 +87,59 @@ initialize(void)
 
     /* Bind socket */
     if (bind(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
-        perror("Sjo");
-        die("chisai: failed to bind socket\n");       
+        return -1;
     } 
     
     /* Listen to the socket */
     if (listen(sock_fd, 1) < 0) {
-        die("chisai: socket listen failed");
+        return -1;
     }
+
+    return 0;
 }
 
 
 /*
- * Function: init_xcb
+ * Function: deploy_x
  * ------------------
- * Initialize X connection
+ * Connects to X
  *
  * returns: nothing
  */
-void
-init_xcb(xcb_connection_t **con)
+static int
+x_deploy(void)
 {
-    *con = xcb_connect(NULL, NULL);
-    if (xcb_connection_has_error(*con)) {
-        die("chisai: failed to connect to xcb");
+    /* Init XCB and grab events */
+    uint32_t values[2];
+    int mask;
+
+    if (xcb_connection_has_error(connection = xcb_connect(NULL, NULL))) {
+        return -1;
     }
-}
+    
+    if ((screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data) == NULL) {
+        return -1;
+    }
 
+    focused_window = screen->root;
 
-/*
- * Function: get_screen
- * --------------------
- * Gets the current screen the user is on
- *
- * returns: nothing
- */
-void
-get_screen(xcb_connection_t *con, xcb_screen_t **scr)
-{
-	*scr = xcb_setup_roots_iterator(xcb_get_setup(con)).data;
-	if (*scr == NULL)
-		die("chisai: unable to retrieve screen informations");
-}
+    /* Grab mouse buttons */
+    xcb_grab_button(connection, 0, screen->root, XCB_EVENT_MASK_BUTTON_PRESS |
+			XCB_EVENT_MASK_BUTTON_RELEASE, XCB_GRAB_MODE_ASYNC,
+			XCB_GRAB_MODE_ASYNC, screen->root, XCB_NONE, 1, MOD);
 
+	xcb_grab_button(connection, 0, screen->root, XCB_EVENT_MASK_BUTTON_PRESS |
+			XCB_EVENT_MASK_BUTTON_RELEASE, XCB_GRAB_MODE_ASYNC,
+            XCB_GRAB_MODE_ASYNC, screen->root, XCB_NONE, 3, MOD);
+    
+    /* Update mask and root */
+    mask = XCB_CW_EVENT_MASK;
+    values[0] = XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+	xcb_change_window_attributes_checked(connection, screen->root, mask, values);
 
-/*
- * Function: kill_xcb
- * ------------------
- * Kills the X connection
- *
- * returns: nothing
- */
-void
-kill_xcb(xcb_connection_t **con)
-{
-    if (*con)
-        xcb_disconnect(*con);
+    xcb_flush(connection);
+
+    return 0;
 }
 
 
@@ -168,19 +159,24 @@ main(void)
     char message[BUFSIZ];
     int message_length;
 
-    /* Setup socket and X */
-    initialize();
-    init_xcb(&conn);
-    get_screen(conn, &scr);
+    /* Cleanup X Connections */
+    atexit(cleanup);
 
-    root_win = scr->root;
+    /* Setup socket and X */
+    if (socket_deploy() < 0) {
+        errx(EXIT_FAILURE, "chisai: error connecting to socket");
+    }
+
+    if (x_deploy() < 0) {
+        errx(EXIT_FAILURE, "chisai: error connecting to x");
+    }
 
     /* Event Loop */
     while(true)
     {   
         /* Accept client socket */
         if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
-            die("chisai: failed to accept client socket");
+            errx(EXIT_FAILURE, "chisai: failed to accept client socket");
         }
         
         /* Read message and execute */
@@ -196,7 +192,4 @@ main(void)
             fflush(stdout);
         }
     }
-    
-    /* Kill X connection */
-    kill_xcb(&conn);
 }
