@@ -10,7 +10,11 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
 #include <xcb/xcb.h>
+
+#include "config.h"
+#include "types.h"
 
 /* Macros */
 #define MAX(a, b) ((a > b) ? (a) : (b))
@@ -20,7 +24,6 @@
 #define ALT		XCB_MOD_MASK_1
 #define CTRL	XCB_MOD_MASK_CONTROL
 #define SHIFT	XCB_MOD_MASK_SHIFT
-#define MOD     SUPER
 
 /* Socket Variables */
 /* TODO: Make these all local */
@@ -32,11 +35,14 @@ static const char *sock_path;
 static xcb_connection_t *connection;
 static xcb_screen_t *screen;
 static xcb_window_t focused_window;
+static struct conf config;
 
 /* Function Signatures */
 static void cleanup(void);
 static int socket_deploy(void);
 static int x_deploy(void);
+static void load_defaults(void);
+static void events_loop(void);
 
 /*
  * Function: cleanup
@@ -143,8 +149,31 @@ x_deploy(void)
 }
 
 
+static void
+load_defaults(void)
+{
+    config.mod = MOD
+    config.border_side  = BORDER_SIDE;
+    config.border_width = BORDER_WIDTH;
+    config.color_focus = COLOR_FOCUS;
+    config.color_unfocus = COLOR_UNFOCUS;
+    config.workspaces = WORKSPACES;
+    config.sloppy_focus = SLOPPY_FOCUS;
+}
+
+
+static void
+events_loop(void)
+{
+    xcb_generic_event_t *event;
+    uint32_t values[3];
+    xcb_get_geometry_reply_t *geometry;
+    xcb_window_t window = 0;
+
+    
+}
+
 /*
- *
  * Function: main
  * --------------
  * Reads messages from socket and executes
@@ -174,6 +203,7 @@ main(void)
     /* Event Loop */
     while(true)
     {   
+        events_loop();
         /* Accept client socket */
         if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
             errx(EXIT_FAILURE, "chisai: failed to accept client socket");
@@ -192,4 +222,7 @@ main(void)
             fflush(stdout);
         }
     }
+    
+    return EXIT_FAILURE;
+
 }
