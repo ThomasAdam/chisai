@@ -1,14 +1,14 @@
-#define MOD    SUPER
+#!/usr/bin/env bash
 
-#define WORKSPACE_NUMBER 4
+sxhkd &
 
-#define REGULAR_BORDER false
-#define SPECIAL_BORDER true 
+maikuro config mod super
+maikuro config workspace_number 4
 
-#define BORDER_SIDE left/right/top/bottom
+maikuro config border_side left
+maikuro config border_width 5
 
-#define BORDER_WIDTH 5
-#define BORDER_FOCUS_COLOR 0x140532
-#define BORDER_UNFOCUS_COLOR 0x343423
+maikuro config border_focus 0x546780
+maikuro config border_unfocus 0x252a32
 
-#define SLOPPY_FOCUS false /*Move mouse into window for focus */
+maikuro config sloppy_focus false
