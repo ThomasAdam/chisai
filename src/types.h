@@ -22,10 +22,10 @@ enum modbuttons {
 struct config {
     enum modbuttons mod;
     enum position border_side;
-	int8_t border_width;
-	uint32_t focus_color, unfocus_color;
-	uint32_t workspaces;
-	bool sloppy_focus;
+    int8_t border_width;
+    uint32_t focus_color, unfocus_color;
+    uint32_t workspaces;
+    bool sloppy_focus;
 };
 
 #endif

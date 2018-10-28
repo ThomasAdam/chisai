@@ -18,6 +18,7 @@
 
 /* Macros */
 #define MAX(a, b) ((a > b) ? (a) : (b))
+#define CLEANMASK(mask) ((mask & ~0x80))
 
 /* Modifiers */
 #define SUPER	XCB_MOD_MASK_4
@@ -170,9 +171,23 @@ events_loop(void)
     xcb_get_geometry_reply_t *geometry;
     xcb_window_t window = 0;
 
-    
-}
+    while (true)
+    {
+        event = xcb_wait_for_event(connection);
 
+        if (!event) {
+            errx(1, "xcb connection broken");
+        }
+
+        switch (CLEANMASK(event->response_type))
+        {
+            case XCB_CREATE_NOTIFY:
+            {
+                
+            }
+        }
+    }
+}
 /*
  * Function: main
  * --------------
@@ -195,11 +210,12 @@ main(void)
     if (socket_deploy() < 0) {
         errx(EXIT_FAILURE, "chisai: error connecting to socket");
     }
-
     if (x_deploy() < 0) {
         errx(EXIT_FAILURE, "chisai: error connecting to x");
     }
+    load_defaults();
 
+    events_loop();
     /* Event Loop */
     while(true)
     {   
