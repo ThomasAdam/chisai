@@ -1,4 +1,4 @@
-CC?       = gcc
+CC       ?= gcc
 VPATH     = src
 CFLAGS   += -std=c11 -Wall -Wextra -pedantic
 LDFLAGS  += -lxcb
