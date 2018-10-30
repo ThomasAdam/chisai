@@ -12,15 +12,7 @@ enum position {
     ALL,
 };
 
-enum modbuttons {
-    SUPER,
-    ALT,
-    CTRL,
-    SHIFT,
-};
-
-struct config {
-    enum modbuttons mod;
+struct conf {
     enum position border_side;
     int8_t border_width;
     uint32_t focus_color, unfocus_color;

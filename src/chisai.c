@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -20,11 +21,14 @@
 #define MAX(a, b) ((a > b) ? (a) : (b))
 #define CLEANMASK(mask) ((mask & ~0x80))
 
-/* Modifiers */
-#define SUPER	XCB_MOD_MASK_4
-#define ALT		XCB_MOD_MASK_1
-#define CTRL	XCB_MOD_MASK_CONTROL
-#define SHIFT	XCB_MOD_MASK_SHIFT
+enum { INACTIVE, ACTIVE };
+
+/* Modifiers - You can change to set different MOD */
+#define SUPER XCB_MOD_MASK_4
+#define ALT	  XCB_MOD_MASK_1
+#define CTRL  XCB_MOD_MASK_CONTROL
+#define SHIFT XCB_MOD_MASK_SHIFT
+#define MOD	  SUPER
 
 /* Socket Variables */
 /* TODO: Make these all local */
@@ -43,6 +47,8 @@ static void cleanup(void);
 static int socket_deploy(void);
 static int x_deploy(void);
 static void load_defaults(void);
+static void subscribe(xcb_window_t);
+static void focus(xcb_window_t, int);
 static void events_loop(void);
 
 /*
@@ -153,41 +159,119 @@ x_deploy(void)
 static void
 load_defaults(void)
 {
-    config.mod = MOD
-    config.border_side  = BORDER_SIDE;
-    config.border_width = BORDER_WIDTH;
-    config.color_focus = COLOR_FOCUS;
-    config.color_unfocus = COLOR_UNFOCUS;
-    config.workspaces = WORKSPACES;
-    config.sloppy_focus = SLOPPY_FOCUS;
+    config.border_side   = BORDER_SIDE;
+    config.border_width  = BORDER_WIDTH;
+    config.focus_color   = COLOR_FOCUS;
+    config.unfocus_color = COLOR_UNFOCUS;
+    config.workspaces    = WORKSPACES;
+    config.sloppy_focus  = SLOPPY_FOCUS;
+}
+
+
+static void
+subscribe(xcb_window_t window)
+{
+    uint32_t values[2];
+
+    /* Subscribe to events */
+    values[0] = XCB_EVENT_MASK_ENTER_WINDOW;
+    values[1] = XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+    xcb_change_window_attributes(connection, window, XCB_CW_EVENT_MASK, values);
+
+    /* TODO: "SiCcCk BoRdErs", rn --> Border Application */
+    values[0] = config.border_width;
+    xcb_configure_window(connection, window, XCB_CONFIG_WINDOW_BORDER_WIDTH, values);
+}
+
+
+static void
+focus(xcb_window_t window, int mode)
+{
+    uint32_t values[1];
+    
+    values[0] = mode ? config.focus_color : config.unfocus_color;
+    xcb_change_window_attributes(connection, window, XCB_CW_BORDER_PIXEL, values);
+
+    if (mode == ACTIVE) {
+        xcb_set_input_focus(connection, XCB_INPUT_FOCUS_POINTER_ROOT,
+            window, XCB_CURRENT_TIME);
+        if (window != focused_window) {
+            focus(focused_window, INACTIVE);
+            focused_window = window;
+        }
+    }
 }
 
 
 static void
 events_loop(void)
 {
-    xcb_generic_event_t *event;
-    uint32_t values[3];
-    xcb_get_geometry_reply_t *geometry;
-    xcb_window_t window = 0;
 
     while (true)
     {
-        event = xcb_wait_for_event(connection);
+        int x_fd = xcb_get_file_descriptor(connection);
 
-        if (!event) {
-            errx(1, "xcb connection broken");
-        }
+        fd_set file_descriptors;
+        FD_ZERO(&file_descriptors);
+        FD_SET(x_fd, &file_descriptors);
+        FD_SET(sock_fd, &file_descriptors);
 
-        switch (CLEANMASK(event->response_type))
-        {
-            case XCB_CREATE_NOTIFY:
+        int max_fd = MAX(sock_fd, x_fd) + 1;
+
+        select(max_fd, &file_descriptors, NULL, NULL, NULL);
+
+        if (FD_ISSET(sock_fd, &file_descriptors)) {
+            char message[BUFSIZ];
+            int message_length;
+
+            if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
+                errx(EXIT_FAILURE, "chisai: failed to accept client socket");
+            }
+
+            if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
+                message[message_length] = '\0';
+
+            }
+        }   
+
+        if (FD_ISSET(x_fd, &file_descriptors)) {
+            xcb_generic_event_t *event;
+            uint32_t values[3];
+            xcb_get_geometry_reply_t *geometry;
+            xcb_window_t window = 0;
+
+            event = xcb_poll_for_event(connection);
+            
+            if (!event) {
+                continue;
+            }
+
+            switch(CLEANMASK(event->response_type)) 
             {
-                
+                case XCB_CREATE_NOTIFY: 
+                {
+                    xcb_create_notify_event_t *e;
+                    e = (xcb_create_notify_event_t *)event;
+
+                    if (!e->override_redirect) {
+                        subscribe(e->window);
+                        focus(e->window, ACTIVE);
+                    }
+                } break; 
+
+                case XCB_DESTROY_NOTIFY:
+                {
+                    xcb_delete_notify_event_t *e;
+                    e = (xcb_delete_notify_event_t *)event;
+                    
+                    xcb_kill_client(connection, e->window);
+                } break;
             }
         }
     }
 }
+
+
 /*
  * Function: main
  * --------------
@@ -213,32 +297,14 @@ main(void)
     if (x_deploy() < 0) {
         errx(EXIT_FAILURE, "chisai: error connecting to x");
     }
+
     load_defaults();
 
     events_loop();
-    /* Event Loop */
-    while(true)
-    {   
-        events_loop();
-        /* Accept client socket */
-        if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
-            errx(EXIT_FAILURE, "chisai: failed to accept client socket");
-        }
-        
-        /* Read message and execute */
-        if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
-            message[message_length] = '\0';
-
-            // Quit the window manager
-            if (strcmp(message, "quit") == 0) {
-                break;
-            }
-
-            printf("%s\n", message);
-            fflush(stdout);
-        }
-    }
     
     return EXIT_FAILURE;
-
+    /* TODO: COnfig shoud be maikuro config border_width 5 or something 
+     * of the likes where config shows it's editing the config
+     */
+    
 }
