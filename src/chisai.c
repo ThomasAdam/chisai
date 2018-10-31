@@ -125,7 +125,8 @@ x_deploy(void)
     /* Init XCB and grab events */
     uint32_t values[2];
     int mask;
-
+    
+    /* Make sure XCB and the screen are working properly */
     if (xcb_connection_has_error(connection = xcb_connect(NULL, NULL))) {
         return -1;
     }
@@ -156,6 +157,13 @@ x_deploy(void)
 }
 
 
+/*
+ * Function: load_defaults
+ * -----------------------
+ * Load the default settings from config.h
+ *
+ * returns: nothing
+ */
 static void
 load_defaults(void)
 {
@@ -168,6 +176,14 @@ load_defaults(void)
 }
 
 
+/*
+ * Function: subscribe
+ * -------------------
+ * Start listening for events that happen
+ * to the window passed in
+ *
+ * returns: nothing
+ */
 static void
 subscribe(xcb_window_t window)
 {
@@ -184,14 +200,24 @@ subscribe(xcb_window_t window)
 }
 
 
+/*
+ * Function: focus
+ * ---------------
+ * Focuses on the window passed if the mode
+ * argument says to make it ACTIVE
+ *
+ * returns: nothing
+ */
 static void
 focus(xcb_window_t window, int mode)
 {
     uint32_t values[1];
     
+    /* Pick which color to use for the border */
     values[0] = mode ? config.focus_color : config.unfocus_color;
     xcb_change_window_attributes(connection, window, XCB_CW_BORDER_PIXEL, values);
 
+    /* Focus the window */
     if (mode == ACTIVE) {
         xcb_set_input_focus(connection, XCB_INPUT_FOCUS_POINTER_ROOT,
             window, XCB_CURRENT_TIME);
@@ -203,12 +229,21 @@ focus(xcb_window_t window, int mode)
 }
 
 
+/* 
+ * Function: events_loop
+ * ---------------------
+ * Listens for Maikuro and X events, also
+ * handles them appropriately.
+ * 
+ * returns: nothing
+ */
 static void
 events_loop(void)
 {
 
     while (true)
     {
+        /* Select file descriptors and select which one you receive */
         int x_fd = xcb_get_file_descriptor(connection);
 
         fd_set file_descriptors;
@@ -220,6 +255,7 @@ events_loop(void)
 
         select(max_fd, &file_descriptors, NULL, NULL, NULL);
 
+        /* Pathway for if a message from the client is received */
         if (FD_ISSET(sock_fd, &file_descriptors)) {
             char message[BUFSIZ];
             int message_length;
@@ -227,13 +263,13 @@ events_loop(void)
             if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
                 errx(EXIT_FAILURE, "chisai: failed to accept client socket");
             }
-
+            
             if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
                 message[message_length] = '\0';
-
             }
         }   
 
+        /* Pathway for if X event is received */
         if (FD_ISSET(x_fd, &file_descriptors)) {
             xcb_generic_event_t *event;
             uint32_t values[3];
@@ -242,30 +278,76 @@ events_loop(void)
 
             event = xcb_poll_for_event(connection);
             
+            /* Make sure there is an event */
             if (!event) {
                 continue;
             }
 
+            /* Handle all the X events we are accepting */
             switch(CLEANMASK(event->response_type)) 
             {
+                /* Pathway for newly created window */
                 case XCB_CREATE_NOTIFY: 
                 {
                     xcb_create_notify_event_t *e;
                     e = (xcb_create_notify_event_t *)event;
-
+                    
+                    /* Make sure the window isn't a bar or panel */
                     if (!e->override_redirect) {
                         subscribe(e->window);
                         focus(e->window, ACTIVE);
                     }
                 } break; 
-
+                
+                /* Pathway for killing a window */
                 case XCB_DESTROY_NOTIFY:
                 {
-                    xcb_delete_notify_event_t *e;
-                    e = (xcb_delete_notify_event_t *)event;
+                    xcb_destroy_notify_event_t *e;
+                    e = (xcb_destroy_notify_event_t *)event;
                     
                     xcb_kill_client(connection, e->window);
                 } break;
+
+                /* Pathway for if mouse enters a window */
+                case XCB_ENTER_NOTIFY:
+                {
+                    /* Make sure sloppy focus is enabled */
+                    if (config.sloppy_focus == true) {
+                        xcb_enter_notify_event_t *e;
+                        e = (xcb_enter_notify_event_t *)event;
+                        focus(e->event, ACTIVE);
+                    } else {
+                        break;
+                    }
+                } break;
+
+                case XCB_MAP_NOTIFY:
+                {
+                    xcb_map_notify_event_t *e;
+                    e = (xcb_map_notify_event_t *)event;
+
+                    if (!e->override_redirect) {
+                        xcb_map_windows(connection, e->window);
+                        focus(e->window, ACTIVE);
+                    }
+                } break;
+
+                case XCB_BUTTON_PRESS:
+                {
+                    xcb_button_press_event_t *e;
+                    e = (xcb_button_press_event_t *)event;
+                    window = e->child;
+
+                    if (!window || win == scr->root) {
+                        break;
+                    }
+
+                    values[0] = XCB_STACK_MODE_ABOVE;
+                    xcb_configure_window(connection, window,
+                            XCB_CONFIG_WINDOW_STACK_MODE, values);
+                    geometry = xcb_get_geometry_reply(connection,
+                            xcb_get_geometry(connection, window), NULL);
+                }
             }
         }
     }
