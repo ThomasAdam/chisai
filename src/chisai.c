@@ -327,7 +327,7 @@ events_loop(void)
                     e = (xcb_map_notify_event_t *)event;
 
                     if (!e->override_redirect) {
-                        xcb_map_windows(connection, e->window);
+                        xcb_map_window(connection, e->window);
                         focus(e->window, ACTIVE);
                     }
                 } break;
@@ -338,7 +338,7 @@ events_loop(void)
                     e = (xcb_button_press_event_t *)event;
                     window = e->child;
 
-                    if (!window || win == scr->root) {
+                    if (!window || window == screen->root) {
                         break;
                     }
 
@@ -347,8 +347,99 @@ events_loop(void)
                             XCB_CONFIG_WINDOW_STACK_MODE, values);
                     geometry = xcb_get_geometry_reply(connection,
                             xcb_get_geometry(connection, window), NULL);
-                }
+
+                    if(e->detail == 1) {
+                        values[2] = 1;
+                        xcb_warp_pointer(connection, XCB_NONE, window,
+                                0, 0, 0, 0, geometry->width/2, geometry->height/2);
+                    
+                    } else {
+                        values[2] = 3;
+                        xcb_warp_pointer(connection, XCB_NONE, window,
+                                0, 0, 0, 0, geometry->width, geometry->height);
+                    }
+                    
+                    xcb_grab_pointer(connection, 0, screen->root,
+                            XCB_EVENT_MASK_BUTTON_RELEASE
+                            | XCB_EVENT_MASK_BUTTON_MOTION
+                            | XCB_EVENT_MASK_POINTER_MOTION_HINT,
+                            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
+                            screen->root, XCB_NONE, XCB_CURRENT_TIME);
+                    xcb_flush(connection);
+                } break;
+
+                case XCB_MOTION_NOTIFY:
+                {
+                    xcb_query_pointer_reply_t *pointer;
+                    pointer = xcb_query_pointer_reply(connection,
+                            xcb_query_pointer(connection, screen->root), 0);
+                    if (values[2] == 1) {
+                        geometry = xcb_get_geometry_reply(connection,
+                                xcb_get_geometry(connection, screen->root), 0);
+
+                        if (!geometry) {
+                            break;
+                        }
+
+                        values[0] = (pointer->root_x + geometry->width / 2 
+                                > screen->width_in_pixels
+                                - (config.border_width * 2))
+                                ? (screen->width_in_pixels - geometry->width
+                                - (config.border_width * 2))
+                                : pointer->root_x - geometry->width /2;
+
+                        values[1] = (pointer->root_y + geometry->height / 2
+                                > screen->height_in_pixels
+                                - (config.border_width * 2))
+                                ? (screen->height_in_pixels - geometry->height
+                                - (config.border_width * 2))
+                                : pointer->root_y - geometry->height / 2;
+
+                        if (pointer->root_x < geometry->width / 2) {
+                            values[0] = 0;
+                        }
+                        if (pointer->root_y < geometry->height / 2) {
+                            values[1] = 0;
+                        }
+                            
+                        xcb_configure_window(connection, window,
+                                XCB_CONFIG_WINDOW_X
+                                | XCB_CONFIG_WINDOW_Y, values);
+
+                        xcb_flush(connection); 
+                    } else if (values[2] == 3 ) {
+                        geometry = xcb_get_geometry_reply(connection,
+                                xcb_get_geometry(connection, window), NULL);
+                        values[0] = pointer->root_x - geometry->x;
+                        values[1] = pointer->root_y - geometry->y;
+                        xcb_configure_window(connection, window,
+                                XCB_CONFIG_WINDOW_WIDTH
+                                | XCB_CONFIG_WINDOW_HEIGHT, values);
+                        xcb_flush(connection);
+                    }
+                } break;
+
+                case XCB_BUTTON_RELEASE:
+                {
+                    focus(window, ACTIVE);
+                    xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
+                } break;
+
+                case XCB_CONFIGURE_NOTIFY:
+                {
+                    xcb_configure_notify_event_t *e;
+                    e = (xcb_configure_notify_event_t *)event;
+
+                    if (e->window != focused_window) {
+                        focus(e->window, INACTIVE);
+                    }
+
+                    focus(focused_window, ACTIVE);
+                } break;
             }
+
+            xcb_flush(connection);
+            free(event);
         }
     }
 }
@@ -366,8 +457,8 @@ int
 main(void)
 {
     /* Local variables */
-    char message[BUFSIZ];
-    int message_length;
+    // char message[BUFSIZ];
+    // int message_length;
 
     /* Cleanup X Connections */
     atexit(cleanup);

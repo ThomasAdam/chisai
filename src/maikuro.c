@@ -30,7 +30,7 @@ die(char *fmt, ...)
 }
 
 /* Variables */
-char message[BUFSIZ];;
+char message[BUFSIZ];
 struct sockaddr_un sock_address;
 int sock_fd;
 const char *sock_path;
