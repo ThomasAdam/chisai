@@ -1,9 +1,6 @@
 #ifndef WM_CONFIG_H
 #define WM_CONFIG_H
 
-/* Mod buttons include are SUPER, ALT, CTRL, and SHIFT */
-#define MOD SUPER 
-
 /* Set border side: TOP, BOTTOM, LEFT, RIGHT, or ALL for normal borders*/
 #define BORDER_SIDE ALL
 

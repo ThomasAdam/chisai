@@ -51,6 +51,7 @@ static void subscribe(xcb_window_t);
 static void focus(xcb_window_t, int);
 static void events_loop(void);
 
+
 /*
  * Function: cleanup
  * -----------------
@@ -456,10 +457,6 @@ events_loop(void)
 int
 main(void)
 {
-    /* Local variables */
-    // char message[BUFSIZ];
-    // int message_length;
-
     /* Cleanup X Connections */
     atexit(cleanup);
 
