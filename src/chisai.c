@@ -44,7 +44,7 @@ static struct list *focused_groups = NULL;
 /* XCB Variables */
 static xcb_connection_t *connection;
 static xcb_screen_t *screen;
-static xcb_window_t focused_window;
+static struct client focused_window;
 static struct conf config;
 
 /* Function Signatures */
@@ -58,16 +58,16 @@ static int socket_deploy(void);
 static int x_deploy(void);
 static void load_defaults(void);
 static void subscribe(xcb_window_t window);
-static void focus(xcb_window_t window, int mode);
+static void focus(struct client *client, int mode);
 static void events_loop(void);
 
 
 /*
  * Function: add_node
  * ------------------
- * Adds a node to a list
+ * Prepends a node to a list
  *
- * returns: nothing
+ * returns: node created
  */
 static struct node*
 add_node(struct list *list)
@@ -98,7 +98,7 @@ add_node(struct list *list)
  * ---------------------
  * Delete a specific node from a list
  *
- * returns; nothing
+ * returns: nothing
  */
 static void
 delete_node(struct list *list, struct node *node)
@@ -167,14 +167,10 @@ setup_window(xcb_window_t window)
     node = add_node(window_list);
     client = malloc(sizeof(struct client));
 
-    if (node == NULL) {
+    if (node == NULL || client == NULL) {
         return NULL;
     }
 
-    if (client == NULL) {
-        return NULL;
-    }
-    
     node->data = client;
 
     client->window = window;
@@ -189,9 +185,6 @@ setup_window(xcb_window_t window)
     get_geometry(&client->window, &client->x, &client->y,
             &client->width, &client->height);
     client->group = focused_group;
-
-    subscribe(client->window);
-    focus(client->window, ACTIVE);
 
     return client;
 }
@@ -370,17 +363,23 @@ subscribe(xcb_window_t window)
  * returns: nothing
  */
 static void
-focus(xcb_window_t window, int mode)
+focus(struct client *client, int mode)
 {
-    uint32_t values[1];
-
+    
+    if (client == NULL) {
+        focused_window = NULL;
+        xcb_set_input_focus(connection, XCB_NONE,
+                XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
+    }
     /* Focus the window */
     if (mode == ACTIVE) {
         xcb_set_input_focus(connection, XCB_INPUT_FOCUS_POINTER_ROOT,
-            window, XCB_CURRENT_TIME);
-        if (window != focused_window) {
-            focused_window = window;
+            client->window, XCB_CURRENT_TIME);
+        if (client != focused_window) {
+            focused_window = *client;
         }
+    } else if (mode == INACTIVE) {
+
     }
 }
 
@@ -444,12 +443,7 @@ events_loop(void)
             {
                 case XCB_CREATE_NOTIFY: 
                 {
-                    xcb_create_notify_event_t *e;
-                    e = (xcb_create_notify_event_t *)event;
-
-                    if (!e->override_redirect) {
-                        new_window(event);
-                    }
+                    new_window(event);
                 } break; 
                 
                 /* Pathway for killing a window */
