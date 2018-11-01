@@ -2,7 +2,6 @@
 
 sxhkd &
 
-maikuro config mod super
 maikuro config workspace_number 4
 
 maikuro config border_side left

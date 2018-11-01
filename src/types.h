@@ -65,7 +65,7 @@ struct conf {
  */
 struct Arg {
     const char** command;
-    const int i;
+    const uint8_t i;
 };
 
 
@@ -80,8 +80,38 @@ struct Arg {
  */ 
 struct client {
     xcb_window_t window;
+    uint16_t group;
     bool maxed;
+    int16_t x, y;
+    uint16_t width, height;
     struct sizepos original_size;
 };
+
+/*
+ * Struct: node
+ * ------------
+ * node in the list 
+ *
+ * data  - Actual data of the element
+ * next  - Next node in the list
+ */
+struct node {
+    void *data;
+    struct node *next;
+};
+
+/* 
+ * Struct: list
+ * ------------
+ * Singely linked list
+ *
+ * length  - length of the list
+ * head    - first node in the list 
+ */
+struct list {
+    int length;
+    struct node *head;
+};
+
 
 #endif

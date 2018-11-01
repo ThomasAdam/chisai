@@ -36,6 +36,11 @@ static int sock_fd;
 static int client_fd;
 static const char *sock_path;
 
+/* Group Variables */
+static uint16_t focused_group = 1;
+static struct list *window_list = NULL;
+static struct list *focused_groups = NULL;
+
 /* XCB Variables */
 static xcb_connection_t *connection;
 static xcb_screen_t *screen;
@@ -43,14 +48,173 @@ static xcb_window_t focused_window;
 static struct conf config;
 
 /* Function Signatures */
+static struct node* add_node(struct list *list);
+static void delete_node(struct list *list, struct node *node);
+static void new_window(xcb_generic_event_t *event);
+static struct client* setup_window(xcb_window_t window);
+static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width);
 static void cleanup(void);
 static int socket_deploy(void);
 static int x_deploy(void);
 static void load_defaults(void);
-static void subscribe(xcb_window_t);
-static void focus(xcb_window_t, int);
+static void subscribe(xcb_window_t window);
+static void focus(xcb_window_t window, int mode);
 static void events_loop(void);
 
+
+/*
+ * Function: add_node
+ * ------------------
+ * Adds a node to a list
+ *
+ * returns: nothing
+ */
+static struct node*
+add_node(struct list *list)
+{
+    struct node *node;
+    
+    node = (struct node *) malloc(sizeof(struct node));
+
+    if (node == NULL) {
+        return NULL;
+    }
+    
+    if (list == NULL) {
+        node->next = NULL;
+    } else {
+        node->next = list->head;
+    }
+
+    list->head = node;
+    list->length++;
+
+    return node;
+}
+
+
+/* 
+ * Function: delete_node
+ * ---------------------
+ * Delete a specific node from a list
+ *
+ * returns; nothing
+ */
+static void
+delete_node(struct list *list, struct node *node)
+{
+    struct node *previous = NULL;
+    struct node *current  = list->head;
+    struct node *next     = NULL;
+
+    if (list == NULL || node == NULL) {
+        return;
+    } else if (node == list->head) {
+        struct node *new_head = list->head->next;
+        free(list->head);
+        list->head = new_head;
+    } else {
+        while (current != node) {
+            previous = current;
+            current = current->next;
+        }
+        if (current == NULL) {
+            return;
+        } else {
+            next = current->next;
+            free(current);
+            previous->next = next;
+        }
+    }
+
+    list->length--;
+}
+
+
+/*
+ * Function: new_window
+ * --------------------
+ * Spawn a new window and add to client list
+ *
+ * returns: nothing
+ */
+static void
+new_window(xcb_generic_event_t *event)
+{
+    xcb_create_notify_event_t *e;
+    e = (xcb_create_notify_event_t *)event;
+    struct client *client;
+
+    client = setup_window(e->window);
+
+    if (client == NULL) {
+        return;
+    }
+
+    xcb_map_window(connection, client->window);
+
+    if (!client->maxed) {
+        setborders(client, ACTIVE);
+    }
+}
+
+static struct client*
+setup_window(xcb_window_t window)
+{
+    struct client *client;
+    struct node *node;
+
+    node = add_node(window_list);
+    client = malloc(sizeof(struct client));
+
+    if (node == NULL) {
+        return NULL;
+    }
+
+    if (client == NULL) {
+        return NULL;
+    }
+    
+    node->data = client;
+
+    client->window = window;
+
+    /* Reset all values */
+    client->x = 0;
+    client->y = 0;
+    client->width= 0;
+    client->height = 0;
+    client->maxed = false;
+    
+    get_geometry(&client->window, &client->x, &client->y,
+            &client->width, &client->height);
+    client->group = focused_group;
+
+    subscribe(client->window);
+    focus(client->window, ACTIVE);
+
+    return client;
+}
+
+static bool
+get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y,
+                uint16_t *height, uint16_t *width)
+{
+    xcb_get_geometry_reply_t *geometry = xcb_get_geometry_reply(connection,
+            xcb_get_geometry(connection, *window), NULL);
+    
+    if (geometry == NULL) {
+        return false;
+    }
+    
+    *x = geometry->x;
+    *y = geometry->y;
+    *width = geometry->width;
+    *height = geometry->height;
+
+    free(geometry);
+    return true;   
+}
 
 /*
  * Function: cleanup
@@ -188,16 +352,12 @@ load_defaults(void)
 static void
 subscribe(xcb_window_t window)
 {
-    uint32_t values[2];
+    uint32_t values[2] = {
+        XCB_EVENT_MASK_ENTER_WINDOW,
+        XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY
+    };
 
-    /* Subscribe to events */
-    values[0] = XCB_EVENT_MASK_ENTER_WINDOW;
-    values[1] = XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
     xcb_change_window_attributes(connection, window, XCB_CW_EVENT_MASK, values);
-
-    /* TODO: "SiCcCk BoRdErs", rn --> Border Application */
-    values[0] = config.border_width;
-    xcb_configure_window(connection, window, XCB_CONFIG_WINDOW_BORDER_WIDTH, values);
 }
 
 
@@ -213,17 +373,12 @@ static void
 focus(xcb_window_t window, int mode)
 {
     uint32_t values[1];
-    
-    /* Pick which color to use for the border */
-    values[0] = mode ? config.focus_color : config.unfocus_color;
-    xcb_change_window_attributes(connection, window, XCB_CW_BORDER_PIXEL, values);
 
     /* Focus the window */
     if (mode == ACTIVE) {
         xcb_set_input_focus(connection, XCB_INPUT_FOCUS_POINTER_ROOT,
             window, XCB_CURRENT_TIME);
         if (window != focused_window) {
-            focus(focused_window, INACTIVE);
             focused_window = window;
         }
     }
@@ -275,7 +430,7 @@ events_loop(void)
             xcb_generic_event_t *event;
             uint32_t values[3];
             xcb_get_geometry_reply_t *geometry;
-            xcb_window_t window = 0;
+            xcb_window_t window = XCB_WINDOW_NONE;
 
             event = xcb_poll_for_event(connection);
             
@@ -287,16 +442,13 @@ events_loop(void)
             /* Handle all the X events we are accepting */
             switch(CLEANMASK(event->response_type)) 
             {
-                /* Pathway for newly created window */
                 case XCB_CREATE_NOTIFY: 
                 {
                     xcb_create_notify_event_t *e;
                     e = (xcb_create_notify_event_t *)event;
-                    
-                    /* Make sure the window isn't a bar or panel */
+
                     if (!e->override_redirect) {
-                        subscribe(e->window);
-                        focus(e->window, ACTIVE);
+                        new_window(event);
                     }
                 } break; 
                 
