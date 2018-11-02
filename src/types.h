@@ -84,6 +84,7 @@ struct client {
     bool maxed;
     int16_t x, y;
     uint16_t width, height;
+    uint8_t depth;
     struct sizepos original_size;
 };
 

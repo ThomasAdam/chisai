@@ -1,4 +1,3 @@
-/* Chisai - Lightweight, floating WM */
 /* Includes */
 #include <err.h>
 #include <limits.h>
@@ -44,20 +43,32 @@ static struct list *focused_groups = NULL;
 /* XCB Variables */
 static xcb_connection_t *connection;
 static xcb_screen_t *screen;
-static struct client focused_window;
+static struct client *focused_window;
 static struct conf config;
 
 /* Function Signatures */
+/* List Functions */
 static struct node* add_node(struct list *list);
 static void delete_node(struct list *list, struct node *node);
+
+/* X Event Functions */
 static void new_window(xcb_generic_event_t *event);
+static void destroy_window(xcb_generic_event_t *event);
+
+/* X Helper Functions */
 static struct client* setup_window(xcb_window_t window);
-static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width);
+static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width, uint8_t *depth);
+static void set_borders(struct client *client, int mode);
+
+/* Helper Functions */
+static uint32_t get_color(const char *hex);
+
+/* Main Functions */
 static void cleanup(void);
 static int socket_deploy(void);
 static int x_deploy(void);
 static void load_defaults(void);
-static void subscribe(xcb_window_t window);
+static void subscribe(struct client *client);
 static void focus(struct client *client, int mode);
 static void events_loop(void);
 
@@ -73,13 +84,13 @@ static struct node*
 add_node(struct list *list)
 {
     struct node *node;
-    
+
     node = (struct node *) malloc(sizeof(struct node));
 
     if (node == NULL) {
         return NULL;
     }
-    
+
     if (list == NULL) {
         node->next = NULL;
     } else {
@@ -93,7 +104,7 @@ add_node(struct list *list)
 }
 
 
-/* 
+/*
  * Function: delete_node
  * ---------------------
  * Delete a specific node from a list
@@ -154,10 +165,42 @@ new_window(xcb_generic_event_t *event)
     xcb_map_window(connection, client->window);
 
     if (!client->maxed) {
-        setborders(client, ACTIVE);
+        set_borders(client, ACTIVE);
     }
 }
 
+
+static void
+destroy_window(xcb_generic_event_t *event)
+{
+    xcb_destroy_notify_event_t *e;
+    e = (xcb_destroy_notify_event_t *)event;
+    struct client *client;
+
+    if (focused_window != NULL && focused_window->window == e->window)
+    {
+        focused_window = NULL;
+    }
+
+    client = find_client(&e->window);
+
+    if (client != NULL) {
+        xcb_kill_client(connection, e->window);
+
+        /* TODO: Remove window from client list */
+    }
+    
+}
+
+
+/*
+ * Function: setup_window
+ * ----------------------
+ * Setup the window in a client with all the
+ * fields it needs
+ *
+ * returns: client
+ */
 static struct client*
 setup_window(xcb_window_t window)
 {
@@ -180,33 +223,104 @@ setup_window(xcb_window_t window)
     client->y = 0;
     client->width= 0;
     client->height = 0;
+    client->depth= 0;
+
     client->maxed = false;
-    
+
     get_geometry(&client->window, &client->x, &client->y,
-            &client->width, &client->height);
+            &client->width, &client->height, &client->depth);
     client->group = focused_group;
 
     return client;
 }
 
+
+/*
+ * Setup: get_geometry
+ * -------------------
+ * Get the geometry of the window passed in and
+ * set the fields of the window
+ *
+ * returns: true if everything worked
+ */
 static bool
 get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y,
-                uint16_t *height, uint16_t *width)
+                uint16_t *height, uint16_t *width, uint8_t *depth)
 {
     xcb_get_geometry_reply_t *geometry = xcb_get_geometry_reply(connection,
             xcb_get_geometry(connection, *window), NULL);
-    
+
     if (geometry == NULL) {
         return false;
     }
-    
+
     *x = geometry->x;
     *y = geometry->y;
     *width = geometry->width;
     *height = geometry->height;
+    *depth = geometry->depth;
 
     free(geometry);
-    return true;   
+    return true;
+}
+
+
+static void
+set_borders(struct client *client, int mode)
+{
+    uint32_t values[1];
+
+    if(client->maxed) {
+        return;
+    }
+        
+    values[0] = config.border_width;
+    
+    xcb_rectangle_t border_rect[] = {
+
+    };
+    
+    xcb_pixmap_t pmap = xcb_generate_id(connection);
+    xcb_gcontext_t gc = xcb_generate_id(connection);
+
+    xcb_create_gc(connection, gc, pmap, 0, NULL);
+
+    if (mode == ACTIVE) {
+        values[0] = config.focus_color;
+    } else if (mode == INACTIVE) {
+        values[0] = config.unfocus_color;
+    }
+        
+    xcb_change_gc(connection, gc, XCB_GC_FOREGROUND, &values[0]);
+    xcb_poly_fill_rectangle(connection, pmap, gc, 5, border_rect);
+    values[0] = pmap;
+    xcb_change_window_attributes(connection, client->window, XCB_CW_BORDER_PIXMAP,
+            &values[0]);
+
+    xcb_free_pixmap(connection, pmap);
+    xcb_free_gc(connection, gc);
+    xcb_flush(connection);
+}
+
+
+/*
+ * Function: get_color
+ * -------------------
+ * Converts nomral hex code colors like #ffffff
+ * to X's color format 0xffffff
+ *
+ * returns: formatted color
+ */
+static uint32_t
+get_color(const char *hex)
+{
+    uint32_t rgb48;
+    char strgroups[7] = {
+        hex[1], hex[2], hex[3], hex[4], hex[5], hex[6], '\0'
+    };
+
+    rgb48 = strtol(strgroups, NULL, 16);
+    return rgb48 | 0xff000000;
 }
 
 /*
@@ -251,16 +365,16 @@ socket_deploy(void)
     if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
         return -1;
     }
-    
+
     sock_addr.sun_family = AF_UNIX;
-    
+
     unlink(sock_addr.sun_path);
 
     /* Bind socket */
     if (bind(sock_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
         return -1;
-    } 
-    
+    }
+
     /* Listen to the socket */
     if (listen(sock_fd, 1) < 0) {
         return -1;
@@ -283,17 +397,17 @@ x_deploy(void)
     /* Init XCB and grab events */
     uint32_t values[2];
     int mask;
-    
+
     /* Make sure XCB and the screen are working properly */
     if (xcb_connection_has_error(connection = xcb_connect(NULL, NULL))) {
         return -1;
     }
-    
+
     if ((screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data) == NULL) {
         return -1;
     }
 
-    focused_window = screen->root;
+    focused_window->window = screen->root;
 
     /* Grab mouse buttons */
     xcb_grab_button(connection, 0, screen->root, XCB_EVENT_MASK_BUTTON_PRESS |
@@ -303,7 +417,7 @@ x_deploy(void)
 	xcb_grab_button(connection, 0, screen->root, XCB_EVENT_MASK_BUTTON_PRESS |
 			XCB_EVENT_MASK_BUTTON_RELEASE, XCB_GRAB_MODE_ASYNC,
             XCB_GRAB_MODE_ASYNC, screen->root, XCB_NONE, 3, MOD);
-    
+
     /* Update mask and root */
     mask = XCB_CW_EVENT_MASK;
     values[0] = XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
@@ -327,8 +441,8 @@ load_defaults(void)
 {
     config.border_side   = BORDER_SIDE;
     config.border_width  = BORDER_WIDTH;
-    config.focus_color   = COLOR_FOCUS;
-    config.unfocus_color = COLOR_UNFOCUS;
+    config.focus_color   = get_color(COLOR_FOCUS);
+    config.unfocus_color = get_color(COLOR_UNFOCUS);
     config.workspaces    = WORKSPACES;
     config.sloppy_focus  = SLOPPY_FOCUS;
 }
@@ -343,14 +457,14 @@ load_defaults(void)
  * returns: nothing
  */
 static void
-subscribe(xcb_window_t window)
+subscribe(struct client *client)
 {
     uint32_t values[2] = {
         XCB_EVENT_MASK_ENTER_WINDOW,
         XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY
     };
 
-    xcb_change_window_attributes(connection, window, XCB_CW_EVENT_MASK, values);
+    xcb_change_window_attributes(connection, client->window, XCB_CW_EVENT_MASK, values);
 }
 
 
@@ -365,31 +479,47 @@ subscribe(xcb_window_t window)
 static void
 focus(struct client *client, int mode)
 {
-    
-    if (client == NULL) {
-        focused_window = NULL;
-        xcb_set_input_focus(connection, XCB_NONE,
+    if (mode == ACTIVE){
+        if (client == NULL) {
+            focused_window = NULL;
+            xcb_set_input_focus(connection, XCB_NONE,
                 XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
-    }
-    /* Focus the window */
-    if (mode == ACTIVE) {
+
+            xcb_flush(connection);
+            return;
+        }
+
+        /* Don't bother focusing root or the window already in focus */
+        if (client->window == focused_window->window || client->window == screen->root) {
+            return;
+        }
+
+        if (focused_window != NULL) {
+            focus(focused_window, INACTIVE);
+        }
+
         xcb_set_input_focus(connection, XCB_INPUT_FOCUS_POINTER_ROOT,
             client->window, XCB_CURRENT_TIME);
-        if (client != focused_window) {
-            focused_window = *client;
-        }
-    } else if (mode == INACTIVE) {
 
+        focused_window = client;
+
+        set_borders(client, ACTIVE);
+    } else if (mode == INACTIVE) {
+        if (focused_window == NULL || focused_window->window == screen->root) {
+            return;
+        }
+
+        set_borders(focused_window, INACTIVE);
     }
 }
 
 
-/* 
+/*
  * Function: events_loop
  * ---------------------
  * Listens for Maikuro and X events, also
  * handles them appropriately.
- * 
+ *
  * returns: nothing
  */
 static void
@@ -418,11 +548,11 @@ events_loop(void)
             if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
                 errx(EXIT_FAILURE, "chisai: failed to accept client socket");
             }
-            
+
             if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
                 message[message_length] = '\0';
             }
-        }   
+        }
 
         /* Pathway for if X event is received */
         if (FD_ISSET(x_fd, &file_descriptors)) {
@@ -432,27 +562,24 @@ events_loop(void)
             xcb_window_t window = XCB_WINDOW_NONE;
 
             event = xcb_poll_for_event(connection);
-            
+
             /* Make sure there is an event */
             if (!event) {
                 continue;
             }
 
             /* Handle all the X events we are accepting */
-            switch(CLEANMASK(event->response_type)) 
+            switch(CLEANMASK(event->response_type))
             {
-                case XCB_CREATE_NOTIFY: 
+                case XCB_CREATE_NOTIFY:
                 {
                     new_window(event);
-                } break; 
-                
+                } break;
+
                 /* Pathway for killing a window */
                 case XCB_DESTROY_NOTIFY:
                 {
-                    xcb_destroy_notify_event_t *e;
-                    e = (xcb_destroy_notify_event_t *)event;
-                    
-                    xcb_kill_client(connection, e->window);
+                    destroy_window(event);
                 } break;
 
                 /* Pathway for if mouse enters a window */
@@ -499,13 +626,13 @@ events_loop(void)
                         values[2] = 1;
                         xcb_warp_pointer(connection, XCB_NONE, window,
                                 0, 0, 0, 0, geometry->width/2, geometry->height/2);
-                    
+
                     } else {
                         values[2] = 3;
                         xcb_warp_pointer(connection, XCB_NONE, window,
                                 0, 0, 0, 0, geometry->width, geometry->height);
                     }
-                    
+
                     xcb_grab_pointer(connection, 0, screen->root,
                             XCB_EVENT_MASK_BUTTON_RELEASE
                             | XCB_EVENT_MASK_BUTTON_MOTION
@@ -528,7 +655,7 @@ events_loop(void)
                             break;
                         }
 
-                        values[0] = (pointer->root_x + geometry->width / 2 
+                        values[0] = (pointer->root_x + geometry->width / 2
                                 > screen->width_in_pixels
                                 - (config.border_width * 2))
                                 ? (screen->width_in_pixels - geometry->width
@@ -548,12 +675,12 @@ events_loop(void)
                         if (pointer->root_y < geometry->height / 2) {
                             values[1] = 0;
                         }
-                            
+
                         xcb_configure_window(connection, window,
                                 XCB_CONFIG_WINDOW_X
                                 | XCB_CONFIG_WINDOW_Y, values);
 
-                        xcb_flush(connection); 
+                        xcb_flush(connection);
                     } else if (values[2] == 3 ) {
                         geometry = xcb_get_geometry_reply(connection,
                                 xcb_get_geometry(connection, window), NULL);
@@ -597,7 +724,7 @@ events_loop(void)
  * --------------
  * Reads messages from socket and executes
  *
- * returns: error if something goes wrong, else it just 
+ * returns: error if something goes wrong, else it just
  * executes the actions passed in from Maikuro
  */
 int
@@ -617,10 +744,10 @@ main(void)
     load_defaults();
 
     events_loop();
-    
+
     return EXIT_FAILURE;
-    /* TODO: COnfig shoud be maikuro config border_width 5 or something 
+    /* TODO: COnfig shoud be maikuro config border_width 5 or something
      * of the likes where config shows it's editing the config
      */
-    
+
 }
