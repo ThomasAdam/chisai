@@ -7,7 +7,7 @@ maikuro config workspace_number 4
 maikuro config border_side left
 maikuro config border_width 5
 
-maikuro config border_focus 0x546780
-maikuro config border_unfocus 0x252a32
+maikuro config border_focus #546780
+maikuro config border_unfocus #252a32
 
 maikuro config sloppy_focus false
