@@ -30,7 +30,6 @@ enum { INACTIVE, ACTIVE };
 #define MOD	  SUPER
 
 /* Socket Variables */
-/* TODO: Make these all local */
 static int sock_fd;
 static int client_fd;
 static const char *sock_path;
@@ -54,11 +53,15 @@ static void delete_node(struct list *list, struct node *node);
 /* X Event Functions */
 static void new_window(xcb_generic_event_t *event);
 static void destroy_window(xcb_generic_event_t *event);
+static void unmap_window(xcb_generic_event_t *event);
+static void enter_window(xcb_generic_event_t *event);
 
 /* X Helper Functions */
 static struct client* setup_window(xcb_window_t window);
 static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width, uint8_t *depth);
 static void set_borders(struct client *client, int mode);
+static struct client* find_client(const xcb_drawable_t *window);
+static void forget_window(xcb_window_t window);
 
 /* Helper Functions */
 static uint32_t get_color(const char *hex);
@@ -170,6 +173,15 @@ new_window(xcb_generic_event_t *event)
 }
 
 
+/*
+ * Function: destroy_window
+ * ------------------------
+ * Destroys the window and removes it from
+ * the global window list. If the focused window is
+ * destroyed, set it to NULL.
+ *
+ * returns: nothing
+ */
 static void
 destroy_window(xcb_generic_event_t *event)
 {
@@ -185,11 +197,62 @@ destroy_window(xcb_generic_event_t *event)
     client = find_client(&e->window);
 
     if (client != NULL) {
-        xcb_kill_client(connection, e->window);
+        xcb_kill_client(connection, client->window);
 
-        /* TODO: Remove window from client list */
+        forget_window(client->window);
     }
-    
+}
+
+
+/*
+ * Function: unmap_window
+ * ----------------------
+ * Unmaps the window and removes it from the
+ * global window list. If the focused window is unmapped,
+ * set it to NULL.
+ */
+static void
+unmap_window(xcb_generic_event_t *event)
+{
+    xcb_unmap_notify_event_t *e;
+    e = (xcb_unmap_notify_event_t *)event;
+    struct client *client;
+
+    client = find_client(&e->window);
+
+    if (client == NULL) {
+        return;
+    }
+
+    if (focused_window != NULL && client->window == focused_window->window) {
+        focused_window = NULL;
+    }
+
+    xcb_unmap_window(connection, client->window);
+    forget_window(client->window);
+}
+
+
+static void
+enter_window(xcb_generic_event_t *event)
+{
+    xcb_enter_notify_event_t *e;
+    e = (xcb_enter_notify_event_t *)event;
+    struct client *client;
+
+    if (config.sloppy_focus) {
+        if (focused_window != NULL && focused_window->window == e->event) {
+            return;
+        }
+
+        client = find_client(&e->event);
+
+        if (client == NULL) {
+            return;
+        }
+
+        focus(client, ACTIVE);
+        set_borders(client, ACTIVE);
 }
 
 
@@ -264,7 +327,15 @@ get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y,
     return true;
 }
 
-
+/*
+ * Function: set_borders
+ * ---------------------
+ * Set the border of a window using the client
+ * and mode passed in. Color of the border changes
+ * depending on the mode.
+ *
+ * returns: nothing
+ */
 static void
 set_borders(struct client *client, int mode)
 {
@@ -273,13 +344,14 @@ set_borders(struct client *client, int mode)
     if(client->maxed) {
         return;
     }
-        
+
     values[0] = config.border_width;
-    
+
+    /* TODO: Finish setting different borders depending on option */
     xcb_rectangle_t border_rect[] = {
 
     };
-    
+
     xcb_pixmap_t pmap = xcb_generate_id(connection);
     xcb_gcontext_t gc = xcb_generate_id(connection);
 
@@ -290,7 +362,7 @@ set_borders(struct client *client, int mode)
     } else if (mode == INACTIVE) {
         values[0] = config.unfocus_color;
     }
-        
+
     xcb_change_gc(connection, gc, XCB_GC_FOREGROUND, &values[0]);
     xcb_poly_fill_rectangle(connection, pmap, gc, 5, border_rect);
     values[0] = pmap;
@@ -299,7 +371,59 @@ set_borders(struct client *client, int mode)
 
     xcb_free_pixmap(connection, pmap);
     xcb_free_gc(connection, gc);
-    xcb_flush(connection);
+}
+
+
+/*
+ * Function: find_client
+ * ---------------------
+ * Finds the client which holds
+ * the window passed in
+ *
+ * Returns: client
+ */
+static struct client*
+find_client(const xcb_drawable_t *window)
+{
+    struct client *client;
+    struct node *node;
+
+    for (node = window_list->head; node != NULL; node = node->next)
+    {
+        client = node->data;
+
+        if (*window == client->window) {
+            return client;
+        }
+    }
+
+    return NULL;
+}
+
+
+/*
+ * Function: forget_window
+ * -----------------------
+ * Removes a window from the
+ * global list of windows
+ *
+ * returns: nothing
+ */
+static void
+forget_window(xcb_window_t window)
+{
+    struct client *client;
+    struct node *node;
+
+    for (node = window_list->head; node != NULL; node = node->next)
+    {
+        client = node->data;
+
+        if (window == client->window) {
+            delete_node(window_list, node);
+            return;
+        }
+    }
 }
 
 
@@ -484,8 +608,6 @@ focus(struct client *client, int mode)
             focused_window = NULL;
             xcb_set_input_focus(connection, XCB_NONE,
                 XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
-
-            xcb_flush(connection);
             return;
         }
 
@@ -571,7 +693,7 @@ events_loop(void)
             /* Handle all the X events we are accepting */
             switch(CLEANMASK(event->response_type))
             {
-                case XCB_CREATE_NOTIFY:
+                case XCB_MAP_NOTIFY:
                 {
                     new_window(event);
                 } break;
@@ -582,28 +704,15 @@ events_loop(void)
                     destroy_window(event);
                 } break;
 
+                case XCB_UNMAP_NOTIFY:
+                {
+                    unmap_window(event);
+                } break;
+
                 /* Pathway for if mouse enters a window */
                 case XCB_ENTER_NOTIFY:
                 {
-                    /* Make sure sloppy focus is enabled */
-                    if (config.sloppy_focus == true) {
-                        xcb_enter_notify_event_t *e;
-                        e = (xcb_enter_notify_event_t *)event;
-                        focus(e->event, ACTIVE);
-                    } else {
-                        break;
-                    }
-                } break;
-
-                case XCB_MAP_NOTIFY:
-                {
-                    xcb_map_notify_event_t *e;
-                    e = (xcb_map_notify_event_t *)event;
-
-                    if (!e->override_redirect) {
-                        xcb_map_window(connection, e->window);
-                        focus(e->window, ACTIVE);
-                    }
+                    enter_window(event);
                 } break;
 
                 case XCB_BUTTON_PRESS:
