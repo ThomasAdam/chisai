@@ -35,9 +35,8 @@ static int client_fd;
 static const char *sock_path;
 
 /* Group Variables */
-static uint16_t focused_group = 1;
+static uint16_t focused_workspace = 1;
 static struct list *window_list = NULL;
-static struct list *focused_groups = NULL;
 
 /* XCB Variables */
 static xcb_connection_t *connection;
@@ -45,7 +44,6 @@ static xcb_screen_t *screen;
 static struct client *focused_window;
 static struct conf config;
 
-/* Function Signatures */
 /* List Functions */
 static struct node* add_node(struct list *list);
 static void delete_node(struct list *list, struct node *node);
@@ -55,6 +53,7 @@ static void new_window(xcb_generic_event_t *event);
 static void destroy_window(xcb_generic_event_t *event);
 static void unmap_window(xcb_generic_event_t *event);
 static void enter_window(xcb_generic_event_t *event);
+static void configure_window(xcb_generic_event_t *event);
 
 /* X Helper Functions */
 static struct client* setup_window(xcb_window_t window);
@@ -76,13 +75,6 @@ static void focus(struct client *client, int mode);
 static void events_loop(void);
 
 
-/*
- * Function: add_node
- * ------------------
- * Prepends a node to a list
- *
- * returns: node created
- */
 static struct node*
 add_node(struct list *list)
 {
@@ -90,11 +82,11 @@ add_node(struct list *list)
 
     node = (struct node *) malloc(sizeof(struct node));
 
-    if (node == NULL) {
+    if (!node) {
         return NULL;
     }
 
-    if (list == NULL) {
+    if (!list) {
         node->next = NULL;
     } else {
         node->next = list->head;
@@ -107,13 +99,7 @@ add_node(struct list *list)
 }
 
 
-/*
- * Function: delete_node
- * ---------------------
- * Delete a specific node from a list
- *
- * returns: nothing
- */
+
 static void
 delete_node(struct list *list, struct node *node)
 {
@@ -121,18 +107,18 @@ delete_node(struct list *list, struct node *node)
     struct node *current  = list->head;
     struct node *next     = NULL;
 
-    if (list == NULL || node == NULL) {
+    if (!list || !node) {
         return;
     } else if (node == list->head) {
         struct node *new_head = list->head->next;
-        free(list->head);
+        free(list->ehead);
         list->head = new_head;
     } else {
         while (current != node) {
             previous = current;
             current = current->next;
         }
-        if (current == NULL) {
+        if (!current) {
             return;
         } else {
             next = current->next;
@@ -145,14 +131,7 @@ delete_node(struct list *list, struct node *node)
 }
 
 
-/*
- * Function: new_window
- * --------------------
- * Spawn a new window and add to client list
- *
- * returns: nothing
- */
-static void
+ void
 new_window(xcb_generic_event_t *event)
 {
     xcb_create_notify_event_t *e;
@@ -161,7 +140,7 @@ new_window(xcb_generic_event_t *event)
 
     client = setup_window(e->window);
 
-    if (client == NULL) {
+    if (!client) {
         return;
     }
 
@@ -173,15 +152,6 @@ new_window(xcb_generic_event_t *event)
 }
 
 
-/*
- * Function: destroy_window
- * ------------------------
- * Destroys the window and removes it from
- * the global window list. If the focused window is
- * destroyed, set it to NULL.
- *
- * returns: nothing
- */
 static void
 destroy_window(xcb_generic_event_t *event)
 {
@@ -189,14 +159,13 @@ destroy_window(xcb_generic_event_t *event)
     e = (xcb_destroy_notify_event_t *)event;
     struct client *client;
 
-    if (focused_window != NULL && focused_window->window == e->window)
-    {
+    if (focused_window && focused_window->window == e->window) {
         focused_window = NULL;
     }
 
     client = find_client(&e->window);
 
-    if (client != NULL) {
+    if (client) {
         xcb_kill_client(connection, client->window);
 
         forget_window(client->window);
@@ -204,13 +173,6 @@ destroy_window(xcb_generic_event_t *event)
 }
 
 
-/*
- * Function: unmap_window
- * ----------------------
- * Unmaps the window and removes it from the
- * global window list. If the focused window is unmapped,
- * set it to NULL.
- */
 static void
 unmap_window(xcb_generic_event_t *event)
 {
@@ -220,11 +182,11 @@ unmap_window(xcb_generic_event_t *event)
 
     client = find_client(&e->window);
 
-    if (client == NULL) {
+    if (!client) {
         return;
     }
 
-    if (focused_window != NULL && client->window == focused_window->window) {
+    if (focused_window && client->window == focused_window->window) {
         focused_window = NULL;
     }
 
@@ -241,13 +203,13 @@ enter_window(xcb_generic_event_t *event)
     struct client *client;
 
     if (config.sloppy_focus) {
-        if (focused_window != NULL && focused_window->window == e->event) {
+        if (focused_window && focused_window->window == e->event) {
             return;
         }
 
         client = find_client(&e->event);
 
-        if (client == NULL) {
+        if (!client) {
             return;
         }
 
@@ -256,14 +218,23 @@ enter_window(xcb_generic_event_t *event)
 }
 
 
-/*
- * Function: setup_window
- * ----------------------
- * Setup the window in a client with all the
- * fields it needs
- *
- * returns: client
- */
+static void
+configure_window(xcb_generic_event_t *event)
+{
+    xcb_configure_notify_event_t *e;
+    e = (xcb_configure_notify_event_t *)event;
+    struct client *client;
+
+    if ((client = find_client(&e->window)) {
+        if (client->window != focused_window) {
+            focus(client, INACTIVE);
+        }
+
+        focus(focused_window, ACTIVE);
+    }
+}
+
+
 static struct client*
 setup_window(xcb_window_t window)
 {
@@ -273,7 +244,7 @@ setup_window(xcb_window_t window)
     node = add_node(window_list);
     client = malloc(sizeof(struct client));
 
-    if (node == NULL || client == NULL) {
+    if (!node  || !client) {
         return NULL;
     }
 
@@ -292,28 +263,20 @@ setup_window(xcb_window_t window)
 
     get_geometry(&client->window, &client->x, &client->y,
             &client->width, &client->height, &client->depth);
-    client->group = focused_group;
+    client->workspace = focused_workspace;
 
     return client;
 }
 
 
-/*
- * Setup: get_geometry
- * -------------------
- * Get the geometry of the window passed in and
- * set the fields of the window
- *
- * returns: true if everything worked
- */
 static bool
 get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y,
-                uint16_t *height, uint16_t *width, uint8_t *depth)
+             uint16_t *height, uint16_t *width, uint8_t *depth)
 {
     xcb_get_geometry_reply_t *geometry = xcb_get_geometry_reply(connection,
             xcb_get_geometry(connection, *window), NULL);
 
-    if (geometry == NULL) {
+    if (!geometry) {
         return false;
     }
 
@@ -327,15 +290,7 @@ get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y,
     return true;
 }
 
-/*
- * Function: set_borders
- * ---------------------
- * Set the border of a window using the client
- * and mode passed in. Color of the border changes
- * depending on the mode.
- *
- * returns: nothing
- */
+
 static void
 set_borders(struct client *client, int mode)
 {
@@ -374,22 +329,13 @@ set_borders(struct client *client, int mode)
 }
 
 
-/*
- * Function: find_client
- * ---------------------
- * Finds the client which holds
- * the window passed in
- *
- * Returns: client
- */
 static struct client*
 find_client(const xcb_drawable_t *window)
 {
     struct client *client;
     struct node *node;
 
-    for (node = window_list->head; node != NULL; node = node->next)
-    {
+    for (node = window_list->head; node; node = node->next) {
         client = node->data;
 
         if (*window == client->window) {
@@ -401,22 +347,13 @@ find_client(const xcb_drawable_t *window)
 }
 
 
-/*
- * Function: forget_window
- * -----------------------
- * Removes a window from the
- * global list of windows
- *
- * returns: nothing
- */
 static void
 forget_window(xcb_window_t window)
 {
     struct client *client;
     struct node *node;
 
-    for (node = window_list->head; node != NULL; node = node->next)
-    {
+    for (node = window_list->head; node; node = node->next) {
         client = node->data;
 
         if (window == client->window) {
@@ -427,14 +364,6 @@ forget_window(xcb_window_t window)
 }
 
 
-/*
- * Function: get_color
- * -------------------
- * Converts nomral hex code colors like #ffffff
- * to X's color format 0xffffff
- *
- * returns: formatted color
- */
 static uint32_t
 get_color(const char *hex)
 {
@@ -447,29 +376,16 @@ get_color(const char *hex)
     return rgb48 | 0xff000000;
 }
 
-/*
- * Function: cleanup
- * -----------------
- * Cleans up past X connection
- *
- * returns: nothing
- */
+
 static void
 cleanup(void)
 {
-    if (connection != NULL) {
+    if (connection) {
         xcb_disconnect(connection);
     }
 }
 
 
-/*
- * Function: socket_deploy
- * -----------------------
- * Connects to the socket and starts listening
- *
- * return: nothing
- */
 static int
 socket_deploy(void)
 {
@@ -508,13 +424,6 @@ socket_deploy(void)
 }
 
 
-/*
- * Function: deploy_x
- * ------------------
- * Connects to X
- *
- * returns: nothing
- */
 static int
 x_deploy(void)
 {
@@ -527,7 +436,7 @@ x_deploy(void)
         return -1;
     }
 
-    if ((screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data) == NULL) {
+    if (!(screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data)) {
         return -1;
     }
 
@@ -553,13 +462,6 @@ x_deploy(void)
 }
 
 
-/*
- * Function: load_defaults
- * -----------------------
- * Load the default settings from config.h
- *
- * returns: nothing
- */
 static void
 load_defaults(void)
 {
@@ -592,19 +494,11 @@ subscribe(struct client *client)
 }
 
 
-/*
- * Function: focus
- * ---------------
- * Focuses on the window passed if the mode
- * argument says to make it ACTIVE
- *
- * returns: nothing
- */
 static void
 focus(struct client *client, int mode)
 {
     if (mode == ACTIVE){
-        if (client == NULL) {
+        if (!client) {
             focused_window = NULL;
             xcb_set_input_focus(connection, XCB_NONE,
                 XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
@@ -616,7 +510,7 @@ focus(struct client *client, int mode)
             return;
         }
 
-        if (focused_window != NULL) {
+        if (focused_window) {
             focus(focused_window, INACTIVE);
         }
 
@@ -627,7 +521,7 @@ focus(struct client *client, int mode)
 
         set_borders(client, ACTIVE);
     } else if (mode == INACTIVE) {
-        if (focused_window == NULL || focused_window->window == screen->root) {
+        if (!focused_window || focused_window->window == screen->root) {
             return;
         }
 
@@ -636,14 +530,6 @@ focus(struct client *client, int mode)
 }
 
 
-/*
- * Function: events_loop
- * ---------------------
- * Listens for Maikuro and X events, also
- * handles them appropriately.
- *
- * returns: nothing
- */
 static void
 events_loop(void)
 {
@@ -693,35 +579,28 @@ events_loop(void)
             /* Handle all the X events we are accepting */
             switch(CLEANMASK(event->response_type))
             {
-                case XCB_MAP_NOTIFY:
-                {
+                case XCB_MAP_NOTIFY: {
                     new_window(event);
                 } break;
 
-                /* Pathway for killing a window */
-                case XCB_DESTROY_NOTIFY:
-                {
+                case XCB_DESTROY_NOTIFY: {
                     destroy_window(event);
                 } break;
 
-                case XCB_UNMAP_NOTIFY:
-                {
+                case XCB_UNMAP_NOTIFY: {
                     unmap_window(event);
                 } break;
 
-                /* Pathway for if mouse enters a window */
-                case XCB_ENTER_NOTIFY:
-                {
+                case XCB_ENTER_NOTIFY: {
                     enter_window(event);
                 } break;
 
-                case XCB_BUTTON_PRESS:
-                {
+                case XCB_BUTTON_PRESS: {
                     xcb_button_press_event_t *e;
                     e = (xcb_button_press_event_t *)event;
                     window = e->child;
 
-                    if (!window || window == screen->root) {
+                    if (!window || window == screen->rootop_wint) {
                         break;
                     }
 
@@ -751,8 +630,7 @@ events_loop(void)
                     xcb_flush(connection);
                 } break;
 
-                case XCB_MOTION_NOTIFY:
-                {
+                case XCB_MOTION_NOTIFY: {
                     xcb_query_pointer_reply_t *pointer;
                     pointer = xcb_query_pointer_reply(connection,
                             xcb_query_pointer(connection, screen->root), 0);
@@ -802,22 +680,13 @@ events_loop(void)
                     }
                 } break;
 
-                case XCB_BUTTON_RELEASE:
-                {
+                case XCB_BUTTON_RELEASE: {
                     focus(window, ACTIVE);
                     xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
                 } break;
 
-                case XCB_CONFIGURE_NOTIFY:
-                {
-                    xcb_configure_notify_event_t *e;
-                    e = (xcb_configure_notify_event_t *)event;
-
-                    if (e->window != focused_window) {
-                        focus(e->window, INACTIVE);
-                    }
-
-                    focus(focused_window, ACTIVE);
+                case XCB_CONFIGURE_NOTIFY: {
+                    configure_window(event);
                 } break;
             }
 
@@ -828,14 +697,6 @@ events_loop(void)
 }
 
 
-/*
- * Function: main
- * --------------
- * Reads messages from socket and executes
- *
- * returns: error if something goes wrong, else it just
- * executes the actions passed in from Maikuro
- */
 int
 main(void)
 {

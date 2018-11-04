@@ -80,7 +80,7 @@ struct Arg {
  */ 
 struct client {
     xcb_window_t window;
-    uint16_t group;
+    uint16_t workspace;
     bool maxed;
     int16_t x, y;
     uint16_t width, height;
