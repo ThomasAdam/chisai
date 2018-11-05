@@ -111,7 +111,7 @@ delete_node(struct list *list, struct node *node)
         return;
     } else if (node == list->head) {
         struct node *new_head = list->head->next;
-        free(list->ehead);
+        free(list->head);
         list->head = new_head;
     } else {
         while (current != node) {
@@ -215,6 +215,7 @@ enter_window(xcb_generic_event_t *event)
 
         focus(client, ACTIVE);
         set_borders(client, ACTIVE);
+    }
 }
 
 
@@ -225,7 +226,7 @@ configure_window(xcb_generic_event_t *event)
     e = (xcb_configure_notify_event_t *)event;
     struct client *client;
 
-    if ((client = find_client(&e->window)) {
+    if ((client = find_client(&e->window))) {
         if (client->window != focused_window) {
             focus(client, INACTIVE);
         }
@@ -474,14 +475,6 @@ load_defaults(void)
 }
 
 
-/*
- * Function: subscribe
- * -------------------
- * Start listening for events that happen
- * to the window passed in
- *
- * returns: nothing
- */
 static void
 subscribe(struct client *client)
 {
@@ -600,7 +593,7 @@ events_loop(void)
                     e = (xcb_button_press_event_t *)event;
                     window = e->child;
 
-                    if (!window || window == screen->rootop_wint) {
+                    if (!window || window == screen->root) {
                         break;
                     }
 
