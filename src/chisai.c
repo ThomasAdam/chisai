@@ -146,8 +146,9 @@ new_window(xcb_generic_event_t *event)
 
     xcb_map_window(connection, client->window);
 
-    if (!client->maxed) {
-        set_borders(client, ACTIVE);
+    if (!e->override_redirect) {
+        subscribe(client);
+        focus(client);
     }
 }
 
@@ -214,7 +215,6 @@ enter_window(xcb_generic_event_t *event)
         }
 
         focus(client, ACTIVE);
-        set_borders(client, ACTIVE);
     }
 }
 
@@ -497,7 +497,8 @@ focus(struct client *client, int mode)
                 XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
             return;
         }
-
+        
+        if (!client->maxed)
         /* Don't bother focusing root or the window already in focus */
         if (client->window == focused_window->window || client->window == screen->root) {
             return;
