@@ -1,0 +1,11 @@
+super + {1-5}
+    maikuro workspace {1-5}
+
+super + alt + s
+    maikuro config sloppy_focus {true, false}
+
+super + shift + {w, a, s, d, e}
+    maikuro config border_side {top, left, botton, right, all}
+
+super + b + {0-9}
+    maikuro config border_width {0-9}

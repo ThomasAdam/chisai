@@ -55,12 +55,21 @@ static void unmap_window(xcb_generic_event_t *event);
 static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
 
+/* Wrapper Functions */
+static void raise_current_window(void);
+
 /* X Helper Functions */
 static struct client* setup_window(xcb_window_t window);
 static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width, uint8_t *depth);
 static void set_borders(struct client *client, int mode);
+static void resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height);
+static void maximize_window(void);
+static void unmax(struct client *client);
+static void maximize_helper(struct client *client, uint16_t monitor_x, uint16_t monitor_y, uint16_t monitor_width, uint16_t monitor_height);
 static struct client* find_client(const xcb_drawable_t *window);
 static void forget_window(xcb_window_t window);
+static void raise_window(xcb_drawable_t window);
+static void raise_or_lower_window(void);
 
 /* Helper Functions */
 static uint32_t get_color(const char *hex);
@@ -70,6 +79,7 @@ static void cleanup(void);
 static int socket_deploy(void);
 static int x_deploy(void);
 static void load_defaults(void);
+static void load_config(void);
 static void subscribe(struct client *client);
 static void focus(struct client *client, int mode);
 static void events_loop(void);
@@ -236,6 +246,13 @@ configure_window(xcb_generic_event_t *event)
 }
 
 
+static void
+raise_current_window(void)
+{
+    raise_window(focused_window->window);
+}
+
+
 static struct client*
 setup_window(xcb_window_t window)
 {
@@ -329,6 +346,62 @@ set_borders(struct client *client, int mode)
     xcb_free_gc(connection, gc);
 }
 
+
+static void 
+resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height)
+{
+    uint32_t values[2] = { width, height };
+
+    if (screen->root == win || win == 0) {
+        return;
+    }
+
+    xcb_configure_window(connection, window, XCB_CONFIG_WINDOW_WIDTH
+                        | XCB_CONFIG_WINDOW_HEIGHT, values);
+}
+
+
+static void
+toggle_maximize_window(void)
+{
+    if (!focused_window) {
+        return;
+    }
+
+    if (focused_window->maxed) {
+        unmax_window(focused_window)
+        focused_window->maxed = false;
+        set_borders(focused_window, ACTIVE);
+        return;
+    }
+
+    raise_current_window()
+}
+
+static void 
+unmax_window(struct client *client) 
+{
+    uint32_t values[5], mask = 0;
+
+    if (!client) {
+        return;
+    }
+
+    client->x = client->original_size.x;
+    client->y = client->original_size.y;
+    client->width = client->original_size.width;
+    client->height = client->original_size.height;
+
+    values[0] = client->x;
+    values[1] = client->y;
+    values[2] = client->width;
+    values[3] = client->height;
+
+    client->maxed = false;
+    move_resize_window(client->window, client->x, client->y,
+                       client->width, client->height);
+    set_borders(client, ACTIVE);
+}
 
 static struct client*
 find_client(const xcb_drawable_t *window)
@@ -472,6 +545,16 @@ load_defaults(void)
     config.unfocus_color = get_color(COLOR_UNFOCUS);
     config.workspaces    = WORKSPACES;
     config.sloppy_focus  = SLOPPY_FOCUS;
+}
+
+
+static void
+load_config(void)
+{
+    if (fork() == 0) {
+        execl("${XDG_CONFIG_HOME:-${HOME}/.config}/chisai/chisairc", "chisairc", NULL);
+        exit();
+    }
 }
 
 
@@ -706,6 +789,7 @@ main(void)
     }
 
     load_defaults();
+    load_config();
 
     events_loop();
 
