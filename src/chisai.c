@@ -54,9 +54,13 @@ static void destroy_window(xcb_generic_event_t *event);
 static void unmap_window(xcb_generic_event_t *event);
 static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
+static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[3]);
+static void mouse_motion(xcb_generic_event_t *event);
+static void button_release(xcb_generic_event_t *event);
 
 /* Wrapper Functions */
 static void raise_current_window(void);
+static void close_current_window(void);
 
 /* X Helper Functions */
 static struct client* setup_window(xcb_window_t window);
@@ -64,12 +68,13 @@ static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, u
 static void set_borders(struct client *client, int mode);
 static void resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height);
 static void maximize_window(void);
-static void unmax(struct client *client);
+static void unmax_window(struct client *client);
 static void maximize_helper(struct client *client, uint16_t monitor_x, uint16_t monitor_y, uint16_t monitor_width, uint16_t monitor_height);
 static struct client* find_client(const xcb_drawable_t *window);
 static void forget_window(xcb_window_t window);
 static void raise_window(xcb_drawable_t window);
-static void raise_or_lower_window(void);
+static void raise_or_lower_window(xcb_drawable_t window);
+static void close_window(xcb_drawable_t window);
 
 /* Helper Functions */
 static uint32_t get_color(const char *hex);
@@ -141,7 +146,7 @@ delete_node(struct list *list, struct node *node)
 }
 
 
- void
+static void
 new_window(xcb_generic_event_t *event)
 {
     xcb_create_notify_event_t *e;
@@ -158,7 +163,7 @@ new_window(xcb_generic_event_t *event)
 
     if (!e->override_redirect) {
         subscribe(client);
-        focus(client);
+        focus(client, ACTIVE);
     }
 }
 
@@ -177,9 +182,7 @@ destroy_window(xcb_generic_event_t *event)
     client = find_client(&e->window);
 
     if (client) {
-        xcb_kill_client(connection, client->window);
-
-        forget_window(client->window);
+        close_window(client->window);
     }
 }
 
@@ -237,7 +240,7 @@ configure_window(xcb_generic_event_t *event)
     struct client *client;
 
     if ((client = find_client(&e->window))) {
-        if (client->window != focused_window) {
+        if (client != focused_window) {
             focus(client, INACTIVE);
         }
 
@@ -247,11 +250,58 @@ configure_window(xcb_generic_event_t *event)
 
 
 static void
+button_press(xcb_generic_event_t *event, struct client *client, 
+            xcb_get_geometry_reply_t *geometry, uint32_t *values[3])
+{
+    xcb_button_press_event_t *e;
+    e = (xcb_button_press_event_t *)event;
+    struct client tempclient;
+
+    client = find_client(&e->child);
+
+    *client = tempclient;
+
+    if (!client) {
+        return;
+    }
+
+    window = client->window;
+    *geometry = xcb_get_geometry_reply(connection,
+                    xcb_get_geometry(connection, window), NULL);
+
+    if(e->detail == 1) {
+        *values[2] = 1;
+        xcb_warp_pointer(connection, XCB_NONE, window,
+            0, 0, 0, 0, geometry->width/2, geometry->height/2);
+    } else {
+        *values[2] = 3;
+        xcb_warp_pointer(connection, XCB_NONE, window,
+            0, 0, 0, 0, geometry->width, geometry->height);
+    }
+
+    xcb_grab_pointer(connection, 0, screen->root,
+        XCB_EVENT_MASK_BUTTON_RELEASE
+            | XCB_EVENT_MASK_BUTTON_MOTION
+            | XCB_EVENT_MASK_POINTER_MOTION_HINT,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
+            screen->root, XCB_NONE, XCB_CURRENT_TIME);
+
+    focused_window = client;
+    raise_current_window();
+}
+
+
+static void
 raise_current_window(void)
 {
     raise_window(focused_window->window);
 }
 
+static void
+close_current_window(void)
+{
+    close_window(focused_window->window);
+}
 
 static struct client*
 setup_window(xcb_window_t window)
@@ -352,7 +402,7 @@ resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height
 {
     uint32_t values[2] = { width, height };
 
-    if (screen->root == win || win == 0) {
+    if (screen->root == window || window == 0) {
         return;
     }
 
@@ -369,20 +419,18 @@ toggle_maximize_window(void)
     }
 
     if (focused_window->maxed) {
-        unmax_window(focused_window)
+        unmax_window(focused_window);
         focused_window->maxed = false;
         set_borders(focused_window, ACTIVE);
         return;
     }
 
-    raise_current_window()
+    raise_current_window();
 }
 
 static void 
 unmax_window(struct client *client) 
 {
-    uint32_t values[5], mask = 0;
-
     if (!client) {
         return;
     }
@@ -391,11 +439,6 @@ unmax_window(struct client *client)
     client->y = client->original_size.y;
     client->width = client->original_size.width;
     client->height = client->original_size.height;
-
-    values[0] = client->x;
-    values[1] = client->y;
-    values[2] = client->width;
-    values[3] = client->height;
 
     client->maxed = false;
     move_resize_window(client->window, client->x, client->y,
@@ -435,6 +478,45 @@ forget_window(xcb_window_t window)
             return;
         }
     }
+}
+
+
+static void
+raise_window(xcb_drawable_t window)
+{
+    uint32_t values[] = { XCB_STACK_MODE_ABOVE };
+
+    if (!focused_window) {
+        return;
+    }
+
+    xcb_configure_window(connection, window,
+            XCB_CONFIG_WINDOW_STACK_MODE, values);
+
+    xcb_flush(connection);
+}
+
+
+static void 
+raise_or_lower_window(xcb_drawable_t window)
+{
+    uint32_t values[] = { XCB_STACK_MODE_OPPOSITE };
+
+    if (!focused_window) {
+        return;
+    }
+
+    xcb_configure_window(connection, window,
+            XCB_CONFIG_WINDOW_STACK_MODE, values);
+
+    xcb_flush(connection);
+}
+
+static void
+close_window(xcb_drawable_t window)
+{
+    xcb_kill_client(connection, client->window);
+    forget_window(client->window);
 }
 
 
@@ -595,8 +677,8 @@ focus(struct client *client, int mode)
             client->window, XCB_CURRENT_TIME);
 
         focused_window = client;
-
         set_borders(client, ACTIVE);
+        raise_current_window();
     } else if (mode == INACTIVE) {
         if (!focused_window || focused_window->window == screen->root) {
             return;
@@ -604,6 +686,8 @@ focus(struct client *client, int mode)
 
         set_borders(focused_window, INACTIVE);
     }
+
+    xcb_flush(connection);
 }
 
 
@@ -623,19 +707,32 @@ events_loop(void)
 
         int max_fd = MAX(sock_fd, x_fd) + 1;
 
-        select(max_fd, &file_descriptors, NULL, NULL, NULL);
+        if (!(select(max_fd, &file_descriptors, NULL, NULL, NULL) > 0)) {
+			continue;
+        }
 
         /* Pathway for if a message from the client is received */
         if (FD_ISSET(sock_fd, &file_descriptors)) {
             char message[BUFSIZ];
             int message_length;
+            char *command;
 
             if ((client_fd = accept(sock_fd, NULL, 0)) < 0) {
                 errx(EXIT_FAILURE, "chisai: failed to accept client socket");
             }
 
-            if ((message_length = read(client_fd, message, sizeof(message))) > 0) {
+            if ((message_length = read(client_fd, message, sizeof(message) - 1)) > 0) {
                 message[message_length] = '\0';
+            }
+
+            command = strtok(*message, " ");
+
+            if (strcmp(command, "maximize") == 0) {
+                /* TODO: Maximize */
+            } else if (strcmp(command, "minimize")) {
+                /* TODO: Minimize */
+            } else if (strcmp(command, "close")) {
+                close_current_window();
             }
         }
 
@@ -643,132 +740,54 @@ events_loop(void)
         if (FD_ISSET(x_fd, &file_descriptors)) {
             xcb_generic_event_t *event;
             uint32_t values[3];
-            xcb_get_geometry_reply_t *geometry;
-            xcb_window_t window = XCB_WINDOW_NONE;
+	        xcb_get_geometry_reply_t *geometry;
+            struct client *client;
 
-            event = xcb_poll_for_event(connection);
+            while ((event = xcb_poll_for_event(connection))) {  
+                /* Make sure there is an event */
+                if (!event) {
+                    continue;
+                }
 
-            /* Make sure there is an event */
-            if (!event) {
-                continue;
-            }
+                /* Handle all the X events we are accepting */
+                switch(CLEANMASK(event->response_type))
+                {
+                    case XCB_MAP_NOTIFY: {
+                        new_window(event);
+                    } break;
 
-            /* Handle all the X events we are accepting */
-            switch(CLEANMASK(event->response_type))
-            {
-                case XCB_MAP_NOTIFY: {
-                    new_window(event);
-                } break;
+                    case XCB_DESTROY_NOTIFY: {
+                        destroy_window(event);
+                    } break;
 
-                case XCB_DESTROY_NOTIFY: {
-                    destroy_window(event);
-                } break;
+                    case XCB_UNMAP_NOTIFY: {
+                        unmap_window(event);
+                    } break;
 
-                case XCB_UNMAP_NOTIFY: {
-                    unmap_window(event);
-                } break;
+                    case XCB_ENTER_NOTIFY: {
+                        enter_window(event);
+                    } break;
 
-                case XCB_ENTER_NOTIFY: {
-                    enter_window(event);
-                } break;
+                    case XCB_BUTTON_PRESS: {
+                        button_press(event, &client, &geometry, &values);
+                    } break;
 
-                case XCB_BUTTON_PRESS: {
-                    xcb_button_press_event_t *e;
-                    e = (xcb_button_press_event_t *)event;
-                    window = e->child;
+                    case XCB_MOTION_NOTIFY: {
+                        mouse_motion(event);
+                    } break;
 
-                    if (!window || window == screen->root) {
+                    case XCB_BUTTON_RELEASE:
+                        button_release(event);
                         break;
-                    }
 
-                    values[0] = XCB_STACK_MODE_ABOVE;
-                    xcb_configure_window(connection, window,
-                            XCB_CONFIG_WINDOW_STACK_MODE, values);
-                    geometry = xcb_get_geometry_reply(connection,
-                            xcb_get_geometry(connection, window), NULL);
+                    case XCB_CONFIGURE_NOTIFY: {
+                        configure_window(event);
+                    } break;
+                }
 
-                    if(e->detail == 1) {
-                        values[2] = 1;
-                        xcb_warp_pointer(connection, XCB_NONE, window,
-                                0, 0, 0, 0, geometry->width/2, geometry->height/2);
-
-                    } else {
-                        values[2] = 3;
-                        xcb_warp_pointer(connection, XCB_NONE, window,
-                                0, 0, 0, 0, geometry->width, geometry->height);
-                    }
-
-                    xcb_grab_pointer(connection, 0, screen->root,
-                            XCB_EVENT_MASK_BUTTON_RELEASE
-                            | XCB_EVENT_MASK_BUTTON_MOTION
-                            | XCB_EVENT_MASK_POINTER_MOTION_HINT,
-                            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
-                            screen->root, XCB_NONE, XCB_CURRENT_TIME);
-                    xcb_flush(connection);
-                } break;
-
-                case XCB_MOTION_NOTIFY: {
-                    xcb_query_pointer_reply_t *pointer;
-                    pointer = xcb_query_pointer_reply(connection,
-                            xcb_query_pointer(connection, screen->root), 0);
-                    if (values[2] == 1) {
-                        geometry = xcb_get_geometry_reply(connection,
-                                xcb_get_geometry(connection, screen->root), 0);
-
-                        if (!geometry) {
-                            break;
-                        }
-
-                        values[0] = (pointer->root_x + geometry->width / 2
-                                > screen->width_in_pixels
-                                - (config.border_width * 2))
-                                ? (screen->width_in_pixels - geometry->width
-                                - (config.border_width * 2))
-                                : pointer->root_x - geometry->width /2;
-
-                        values[1] = (pointer->root_y + geometry->height / 2
-                                > screen->height_in_pixels
-                                - (config.border_width * 2))
-                                ? (screen->height_in_pixels - geometry->height
-                                - (config.border_width * 2))
-                                : pointer->root_y - geometry->height / 2;
-
-                        if (pointer->root_x < geometry->width / 2) {
-                            values[0] = 0;
-                        }
-                        if (pointer->root_y < geometry->height / 2) {
-                            values[1] = 0;
-                        }
-
-                        xcb_configure_window(connection, window,
-                                XCB_CONFIG_WINDOW_X
-                                | XCB_CONFIG_WINDOW_Y, values);
-
-                        xcb_flush(connection);
-                    } else if (values[2] == 3 ) {
-                        geometry = xcb_get_geometry_reply(connection,
-                                xcb_get_geometry(connection, window), NULL);
-                        values[0] = pointer->root_x - geometry->x;
-                        values[1] = pointer->root_y - geometry->y;
-                        xcb_configure_window(connection, window,
-                                XCB_CONFIG_WINDOW_WIDTH
-                                | XCB_CONFIG_WINDOW_HEIGHT, values);
-                        xcb_flush(connection);
-                    }
-                } break;
-
-                case XCB_BUTTON_RELEASE: {
-                    focus(window, ACTIVE);
-                    xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
-                } break;
-
-                case XCB_CONFIGURE_NOTIFY: {
-                    configure_window(event);
-                } break;
+                xcb_flush(connection);
+                free(event);
             }
-
-            xcb_flush(connection);
-            free(event);
         }
     }
 }
