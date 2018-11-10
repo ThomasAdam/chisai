@@ -56,8 +56,7 @@ static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
 static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
 static void mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
-static void button_release(xcb_generic_event_t *event);
-static void button_release(xcb_generic_event_t *event) {} /* so it links */
+static void button_release(struct client client);
 
 /* Wrapper Functions */
 static void raise_current_window(void);
@@ -334,6 +333,14 @@ mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
             | XCB_CONFIG_WINDOW_HEIGHT, values);
     }
     xcb_flush(connection);
+}
+
+
+static void
+button_release(struct client client)
+{
+    focus(client->window, ACTIVE);
+    xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
 }
 
 
@@ -859,9 +866,9 @@ events_loop(void)
                         mouse_motion(&client, &geometry, &values);
                     } break;
 
-                    case XCB_BUTTON_RELEASE:
-                        button_release(event);
-                        break;
+                    case XCB_BUTTON_RELEASE: {
+                        button_release(client);
+                    } break;
 
                     case XCB_CONFIGURE_NOTIFY: {
                         configure_window(event);
