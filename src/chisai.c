@@ -54,8 +54,8 @@ static void destroy_window(xcb_generic_event_t *event);
 static void unmap_window(xcb_generic_event_t *event);
 static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
-static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[3]);
-static void mouse_motion(xcb_generic_event_t *event);
+static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
+static void mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
 static void button_release(xcb_generic_event_t *event);
 
 /* Wrapper Functions */
@@ -67,13 +67,12 @@ static struct client* setup_window(xcb_window_t window);
 static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width, uint8_t *depth);
 static void set_borders(struct client *client, int mode);
 static void resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height);
-static void maximize_window(void);
+static void maximize_window(struct client *client);
 static void unmax_window(struct client *client);
-static void maximize_helper(struct client *client, uint16_t monitor_x, uint16_t monitor_y, uint16_t monitor_width, uint16_t monitor_height);
+static void move_resize_window(xcb_drawable_t window, const uint16_t x, const uint16_t y, const uint16_t width, const uint16_t height);
 static struct client* find_client(const xcb_drawable_t *window);
 static void forget_window(xcb_window_t window);
 static void raise_window(xcb_drawable_t window);
-static void raise_or_lower_window(xcb_drawable_t window);
 static void close_window(xcb_drawable_t window);
 
 /* Helper Functions */
@@ -255,27 +254,23 @@ button_press(xcb_generic_event_t *event, struct client *client,
 {
     xcb_button_press_event_t *e;
     e = (xcb_button_press_event_t *)event;
-    struct client tempclient;
 
     client = find_client(&e->child);
-
-    *client = tempclient;
 
     if (!client) {
         return;
     }
 
-    window = client->window;
-    *geometry = xcb_get_geometry_reply(connection,
-                    xcb_get_geometry(connection, window), NULL);
+    geometry = xcb_get_geometry_reply(connection,
+                    xcb_get_geometry(connection, client->window), NULL);
 
     if(e->detail == 1) {
         *values[2] = 1;
-        xcb_warp_pointer(connection, XCB_NONE, window,
+        xcb_warp_pointer(connection, XCB_NONE, client->window,
             0, 0, 0, 0, geometry->width/2, geometry->height/2);
     } else {
         *values[2] = 3;
-        xcb_warp_pointer(connection, XCB_NONE, window,
+        xcb_warp_pointer(connection, XCB_NONE, client->window,
             0, 0, 0, 0, geometry->width, geometry->height);
     }
 
@@ -288,6 +283,55 @@ button_press(xcb_generic_event_t *event, struct client *client,
 
     focused_window = client;
     raise_current_window();
+}
+
+
+static void
+mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
+             uint32_t *values[])
+{
+    xcb_query_pointer_reply_t *pointer;
+    pointer = xcb_query_pointer_reply(connection,
+            xcb_query_pointer(connection, screen->root), 0);
+    if (values[2] == 1) {
+        geometry = xcb_get_geometry_reply(connection,
+            xcb_get_geometry(connection, client->window), NULL);
+        if (!geometry)
+            return;
+
+        values[0] = (pointer->root_x + geometry->width / 2
+            > screen->width_in_pixels
+            - (config.border_width*2))
+            ? screen->width_in_pixels - geometry->width
+            - (config.border_width*2)
+            : pointer->root_x - geometry->width / 2;
+        values[1] = (pointer->root_y + geometry->height / 2
+            > screen->height_in_pixels
+            - (config.border_width*2))
+            ? (screen->height_in_pixels - geometry->height
+            - (config.border_width*2))
+            : pointer->root_y - geometry->height / 2;
+
+        if (pointer->root_x < geometry->width/2)
+            values[0] = 0;
+        if (pointer->root_y < geometry->height/2)
+            values[1] = 0;
+
+        /* CHange to one of the functions so the wrapper's value also update */
+        xcb_configure_window(connection, client->window,
+            XCB_CONFIG_WINDOW_X
+            | XCB_CONFIG_WINDOW_Y, values);
+        xcb_flush(connection);
+    } else if (values[2] == 3) {
+        geometry = xcb_get_geometry_reply(connection,
+            xcb_get_geometry(connection, client->window), NULL);
+        values[0] = pointer->root_x - geometry->x;
+        values[1] = pointer->root_y - geometry->y;
+        xcb_configure_window(connection, client->window,
+            XCB_CONFIG_WINDOW_WIDTH
+            | XCB_CONFIG_WINDOW_HEIGHT, values);
+    }
+    xcb_flush(connection);
 }
 
 
@@ -410,11 +454,12 @@ resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height
                         | XCB_CONFIG_WINDOW_HEIGHT, values);
 }
 
+/* TODO: Move window as well */
 
 static void
 toggle_maximize_window(void)
 {
-    if (!focused_window) {
+    if (!focused_window || focused_window->window == screen->root) {
         return;
     }
 
@@ -422,11 +467,40 @@ toggle_maximize_window(void)
         unmax_window(focused_window);
         focused_window->maxed = false;
         set_borders(focused_window, ACTIVE);
-        return;
+    } else {
+        set_borders(focused_window, INACTIVE);
+        maximize_window(focused_window);
+        focused_window->maxed = true;
     }
 
     raise_current_window();
 }
+
+
+static void 
+maximize_window(struct client *client)
+{
+    uint32_t values[4];
+
+    client->original_size.x      = client->x;
+    client->original_size.y      = client->y;
+    client->original_size.width  = client->width;
+    client->original_size.height = client->height;
+
+    client->x = 0;
+	client->y = 0;
+	client->width = screen->width_in_pixels;
+    client->height = screen->height_in_pixels;
+
+    values[0] = 0;
+	xcb_configure_window(connection, client->window, XCB_CONFIG_WINDOW_BORDER_WIDTH,
+                        values);
+
+    move_resize_window(client->window, client->x, client->y,
+                       client->width, client->height);
+    client->maxed = true;
+}
+
 
 static void 
 unmax_window(struct client *client) 
@@ -443,8 +517,25 @@ unmax_window(struct client *client)
     client->maxed = false;
     move_resize_window(client->window, client->x, client->y,
                        client->width, client->height);
-    set_borders(client, ACTIVE);
 }
+
+
+static void
+move_resize_window(xcb_drawable_t window, const uint16_t x, const uint16_t y,    
+                   const uint16_t width, const uint16_t height)
+{
+    uint32_t values[4] = { x, y, width, height };
+
+	if (screen->root == window || 0 == window)
+		return;
+
+	xcb_configure_window(connection, window, XCB_CONFIG_WINDOW_X
+			| XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH
+			| XCB_CONFIG_WINDOW_HEIGHT, values);
+
+    xcb_flush(connection);
+}
+
 
 static struct client*
 find_client(const xcb_drawable_t *window)
@@ -497,26 +588,11 @@ raise_window(xcb_drawable_t window)
 }
 
 
-static void 
-raise_or_lower_window(xcb_drawable_t window)
-{
-    uint32_t values[] = { XCB_STACK_MODE_OPPOSITE };
-
-    if (!focused_window) {
-        return;
-    }
-
-    xcb_configure_window(connection, window,
-            XCB_CONFIG_WINDOW_STACK_MODE, values);
-
-    xcb_flush(connection);
-}
-
 static void
 close_window(xcb_drawable_t window)
 {
-    xcb_kill_client(connection, client->window);
-    forget_window(client->window);
+    xcb_kill_client(connection, window);
+    forget_window(window);
 }
 
 
@@ -725,14 +801,19 @@ events_loop(void)
                 message[message_length] = '\0';
             }
 
-            command = strtok(*message, " ");
+            command = strtok(message, " ");
 
             if (strcmp(command, "maximize") == 0) {
-                /* TODO: Maximize */
+                toggle_maximize_window();
             } else if (strcmp(command, "minimize")) {
                 /* TODO: Minimize */
             } else if (strcmp(command, "close")) {
                 close_current_window();
+            } else if (strcmp(command, "config")) {
+                command = strtok(NULL, "");
+                if (strcmp(command, "border_width")) {
+                    /* TODO: Handle all the config options */
+                }
             }
         }
 
@@ -740,8 +821,8 @@ events_loop(void)
         if (FD_ISSET(x_fd, &file_descriptors)) {
             xcb_generic_event_t *event;
             uint32_t values[3];
-	        xcb_get_geometry_reply_t *geometry;
-            struct client *client;
+	        xcb_get_geometry_reply_t geometry;
+            struct client client;
 
             while ((event = xcb_poll_for_event(connection))) {  
                 /* Make sure there is an event */
@@ -773,7 +854,7 @@ events_loop(void)
                     } break;
 
                     case XCB_MOTION_NOTIFY: {
-                        mouse_motion(event);
+                        mouse_motion(&client, &geometry, &values);
                     } break;
 
                     case XCB_BUTTON_RELEASE:
@@ -813,8 +894,4 @@ main(void)
     events_loop();
 
     return EXIT_FAILURE;
-    /* TODO: COnfig shoud be maikuro config border_width 5 or something
-     * of the likes where config shows it's editing the config
-     */
-
 }
