@@ -416,7 +416,7 @@ set_borders(struct client *client, int mode)
 
     /* TODO: Finish setting different borders depending on option */
     xcb_rectangle_t border_rect[] = {
-
+        {1, 1, 1, 1},
     };
 
     xcb_pixmap_t pmap = xcb_generate_id(connection);
@@ -711,7 +711,7 @@ load_config(void)
 {
     if (fork() == 0) {
         execl("${XDG_CONFIG_HOME:-${HOME}/.config}/chisai/chisairc", "chisairc", NULL);
-        exit();
+        exit(EXIT_FAILURE);
     }
 }
 
