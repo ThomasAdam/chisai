@@ -290,6 +290,7 @@ static void
 mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
              uint32_t *values[])
 {
+    /* TODO: Pointer icon or maybe module? */
     xcb_query_pointer_reply_t *pointer;
     pointer = xcb_query_pointer_reply(connection,
             xcb_query_pointer(connection, screen->root), 0);
