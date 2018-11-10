@@ -57,6 +57,7 @@ static void configure_window(xcb_generic_event_t *event);
 static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
 static void mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
 static void button_release(xcb_generic_event_t *event);
+static void button_release(xcb_generic_event_t *event) {} /* so it links */
 
 /* Wrapper Functions */
 static void raise_current_window(void);
