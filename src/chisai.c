@@ -339,7 +339,7 @@ mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
 static void
 button_release(struct client client)
 {
-    focus(client->window, ACTIVE);
+    focus(client.window, ACTIVE);
     xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
 }
 
@@ -680,8 +680,6 @@ x_deploy(void)
     if (!(screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data)) {
         return -1;
     }
-
-    focused_window->window = screen->root;
 
     /* Grab mouse buttons */
     xcb_grab_button(connection, 0, screen->root, XCB_EVENT_MASK_BUTTON_PRESS |
