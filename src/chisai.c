@@ -56,7 +56,7 @@ static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
 static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
 static void mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
-static void button_release(struct client client);
+static void button_release(struct client *client);
 
 /* Wrapper Functions */
 static void raise_current_window(void);
@@ -337,7 +337,7 @@ mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
 
 
 static void
-button_release(struct client client)
+button_release(struct client *client)
 {
     focus(client, ACTIVE);
     xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
@@ -819,7 +819,27 @@ events_loop(void)
             } else if (strcmp(command, "config")) {
                 command = strtok(NULL, "");
                 if (strcmp(command, "border_width")) {
-                    /* TODO: Handle all the config options */
+                    command = strtok(NULL, "");
+                    int width = atoi(strtok);
+                    config.border_width = width;
+                } else if(strcmp(command, "border_side")) {
+                    enum position side;
+                    command = strtok(NULL, "");
+                    if (command == "all") {
+                        side = ALL;
+                    } else if (command == "left") {
+                        side = LEFT;
+                    } else if (command == "right") {
+                        side = RIGHT;
+                    } else if (command == "top") {
+                        side = TOP;
+                    } else if (command == "bottom") {
+                        side = BOTTOM;
+                    } else {
+                        errx(EXIT_FAILURE, "chisai: invalid border side");
+                    }
+
+                    config.border_side = side;
                 }
             }
         }
@@ -865,7 +885,7 @@ events_loop(void)
                     } break;
 
                     case XCB_BUTTON_RELEASE: {
-                        button_release(client);
+                        button_release(&client);
                     } break;
 
                     case XCB_CONFIGURE_NOTIFY: {
