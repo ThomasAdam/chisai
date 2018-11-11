@@ -20,4 +20,9 @@ way.
 ## Wiki
 `Coming soon`
 
+## Contributors
+- @ym1234
+- @0xfi
+- @buffet
+
 
