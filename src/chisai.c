@@ -339,7 +339,7 @@ mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
 static void
 button_release(struct client client)
 {
-    focus(client.window, ACTIVE);
+    focus(client, ACTIVE);
     xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
 }
 
