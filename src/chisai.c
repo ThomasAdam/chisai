@@ -51,6 +51,7 @@ static void delete_node(struct list *list, struct node *node);
 /* X Event Functions */
 static void new_window(xcb_generic_event_t *event);
 static void destroy_window(xcb_generic_event_t *event);
+static void map_window(xcb_generic_event_t *event);
 static void unmap_window(xcb_generic_event_t *event);
 static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
@@ -61,19 +62,26 @@ static void button_release(struct client *client);
 /* Wrapper Functions */
 static void raise_current_window(void);
 static void close_current_window(void);
+static void minimize_current_window(void);
+static void toggle_maximize_window(void);
 
 /* X Helper Functions */
 static struct client* setup_window(xcb_window_t window);
 static bool get_geometry(const xcb_drawable_t *window, int16_t *x, int16_t *y, uint16_t *height, uint16_t *width, uint8_t *depth);
 static void set_borders(struct client *client, int mode);
 static void resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height);
+static void minimize_window(struct client *client);
 static void maximize_window(struct client *client);
 static void unmax_window(struct client *client);
 static void move_resize_window(xcb_drawable_t window, const uint16_t x, const uint16_t y, const uint16_t width, const uint16_t height);
 static struct client* find_client(const xcb_drawable_t *window);
 static void forget_window(xcb_window_t window);
+
+/* Wrapper Call Functions */
+/* TODO: Rewrite maximize and minimize to this as well since this is controlled by maikuro */
 static void raise_window(xcb_drawable_t window);
 static void close_window(xcb_drawable_t window);
+
 
 /* Helper Functions */
 static uint32_t get_color(const char *hex);
@@ -158,8 +166,6 @@ new_window(xcb_generic_event_t *event)
         return;
     }
 
-    xcb_map_window(connection, client->window);
-
     if (!e->override_redirect) {
         subscribe(client);
         focus(client, ACTIVE);
@@ -185,6 +191,28 @@ destroy_window(xcb_generic_event_t *event)
     }
 }
 
+static void
+map_window(xcb_generic_event_t *event)
+{
+    xcb_map_notify_event_t *e;
+    e = (xcb_map_notify_event_t *)event;
+    struct client *client;
+
+    client = find_client(&e->window);
+
+    if (!client) {
+        return;
+    }
+
+    client->mapped = true;
+
+    if (!e->override_redirect) {
+        focus(client, ACTIVE);
+    }
+
+    raise_current_window();
+}
+
 
 static void
 unmap_window(xcb_generic_event_t *event)
@@ -199,12 +227,13 @@ unmap_window(xcb_generic_event_t *event)
         return;
     }
 
+    client->mapped = false;
+
     if (focused_window && client->window == focused_window->window) {
         focused_window = NULL;
     }
 
     xcb_unmap_window(connection, client->window);
-    forget_window(client->window);
 }
 
 
@@ -351,9 +380,35 @@ raise_current_window(void)
 }
 
 static void
+minimize_current_window(void)
+{
+    minimize_window(focused_window);
+}
+
+static void
 close_current_window(void)
 {
     close_window(focused_window->window);
+}
+
+static void
+toggle_maximize_window(void)
+{
+    if (!focused_window || focused_window->window == screen->root) {
+        return;
+    }
+
+    if (focused_window->maxed) {
+        unmax_window(focused_window);
+        focused_window->maxed = false;
+        set_borders(focused_window, ACTIVE);
+    } else {
+        set_borders(focused_window, INACTIVE);
+        maximize_window(focused_window);
+        focused_window->maxed = true;
+    }
+
+    raise_current_window();
 }
 
 static struct client*
@@ -380,6 +435,7 @@ setup_window(xcb_window_t window)
     client->height = 0;
     client->depth= 0;
 
+    client->mapped = true;
     client->maxed = false;
 
     get_geometry(&client->window, &client->x, &client->y,
@@ -463,28 +519,7 @@ resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height
                         | XCB_CONFIG_WINDOW_HEIGHT, values);
 }
 
-/* TODO: Move window as well */
-
-static void
-toggle_maximize_window(void)
-{
-    if (!focused_window || focused_window->window == screen->root) {
-        return;
-    }
-
-    if (focused_window->maxed) {
-        unmax_window(focused_window);
-        focused_window->maxed = false;
-        set_borders(focused_window, ACTIVE);
-    } else {
-        set_borders(focused_window, INACTIVE);
-        maximize_window(focused_window);
-        focused_window->maxed = true;
-    }
-
-    raise_current_window();
-}
-
+/* TODO: Move window function as well */
 
 static void
 maximize_window(struct client *client)
@@ -526,6 +561,18 @@ unmax_window(struct client *client)
     client->maxed = false;
     move_resize_window(client->window, client->x, client->y,
                        client->width, client->height);
+}
+
+
+static void
+minimize_window(struct client *client)
+{
+    if (!client) {
+        return;
+    }
+
+    client->mapped = false;
+    xcb_unmap_window(connection, client->window);
 }
 
 
@@ -814,9 +861,11 @@ events_loop(void)
             if (!strcmp(command, "maximize") == 0) {
                 toggle_maximize_window();
             } else if (!strcmp(command, "minimize")) {
-                /* TODO: Minimize */
+                minimize_current_window();
             } else if (!strcmp(command, "close")) {
                 close_current_window();
+            } else if (!strcmp (command, "resize")) {
+                /* TODO: Resize window */
             } else if (!strcmp(command, "config")) {
                 command = strtok(NULL, "");
                 if (!strcmp(command, "border_width")) {
@@ -860,12 +909,20 @@ events_loop(void)
                 /* Handle all the X events we are accepting */
                 switch(CLEANMASK(event->response_type))
                 {
-                    case XCB_MAP_NOTIFY: {
+                    /* Change this to new window because they can just unmap and map windows
+                     * Then handle new windows in the window created event and don't map and then
+                     * in the map event map the window if it can be found 
+                     */
+                    case XCB_CREATE_NOTIFY: {
                         new_window(event);
                     } break;
 
                     case XCB_DESTROY_NOTIFY: {
                         destroy_window(event);
+                    } break;
+
+                    case XCB_MAP_NOTIFY: {
+                        map_window(event);
                     } break;
 
                     case XCB_UNMAP_NOTIFY: {

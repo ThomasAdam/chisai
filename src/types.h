@@ -82,6 +82,7 @@ struct client {
     xcb_window_t window;
     uint16_t workspace;
     bool maxed;
+    bool mapped;
     int16_t x, y;
     uint16_t width, height;
     uint8_t depth;
