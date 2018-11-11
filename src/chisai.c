@@ -54,8 +54,8 @@ static void destroy_window(xcb_generic_event_t *event);
 static void unmap_window(xcb_generic_event_t *event);
 static void enter_window(xcb_generic_event_t *event);
 static void configure_window(xcb_generic_event_t *event);
-static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
-static void mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values[]);
+static void button_press(xcb_generic_event_t *event, struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values);
+static void mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry, uint32_t *values);
 static void button_release(struct client *client);
 
 /* Wrapper Functions */
@@ -249,8 +249,8 @@ configure_window(xcb_generic_event_t *event)
 
 
 static void
-button_press(xcb_generic_event_t *event, struct client *client, 
-            xcb_get_geometry_reply_t *geometry, uint32_t *values[3])
+button_press(xcb_generic_event_t *event, struct client *client,
+            xcb_get_geometry_reply_t *geometry, uint32_t *values)
 {
     xcb_button_press_event_t *e;
     e = (xcb_button_press_event_t *)event;
@@ -265,11 +265,11 @@ button_press(xcb_generic_event_t *event, struct client *client,
                     xcb_get_geometry(connection, client->window), NULL);
 
     if(e->detail == 1) {
-        *values[2] = 1;
+        values[2] = 1;
         xcb_warp_pointer(connection, XCB_NONE, client->window,
             0, 0, 0, 0, geometry->width/2, geometry->height/2);
     } else {
-        *values[2] = 3;
+        values[2] = 3;
         xcb_warp_pointer(connection, XCB_NONE, client->window,
             0, 0, 0, 0, geometry->width, geometry->height);
     }
@@ -288,7 +288,7 @@ button_press(xcb_generic_event_t *event, struct client *client,
 
 static void
 mouse_motion(struct client *client, xcb_get_geometry_reply_t *geometry,
-             uint32_t *values[])
+             uint32_t *values)
 {
     /* TODO: Pointer icon or maybe module? */
     xcb_query_pointer_reply_t *pointer;
@@ -450,7 +450,7 @@ set_borders(struct client *client, int mode)
 }
 
 
-static void 
+static void
 resize_window(xcb_drawable_t window, const uint16_t width, const uint16_t height)
 {
     uint32_t values[2] = { width, height };
@@ -486,7 +486,7 @@ toggle_maximize_window(void)
 }
 
 
-static void 
+static void
 maximize_window(struct client *client)
 {
     uint32_t values[4];
@@ -511,8 +511,8 @@ maximize_window(struct client *client)
 }
 
 
-static void 
-unmax_window(struct client *client) 
+static void
+unmax_window(struct client *client)
 {
     if (!client) {
         return;
@@ -530,7 +530,7 @@ unmax_window(struct client *client)
 
 
 static void
-move_resize_window(xcb_drawable_t window, const uint16_t x, const uint16_t y,    
+move_resize_window(xcb_drawable_t window, const uint16_t x, const uint16_t y,
                    const uint16_t width, const uint16_t height)
 {
     uint32_t values[4] = { x, y, width, height };
@@ -745,7 +745,7 @@ focus(struct client *client, int mode)
                 XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
             return;
         }
-        
+
         if (!client->maxed)
         /* Don't bother focusing root or the window already in focus */
         if (client->window == focused_window->window || client->window == screen->root) {
@@ -810,30 +810,30 @@ events_loop(void)
 
             command = strtok(message, " ");
 
-            if (strcmp(command, "maximize") == 0) {
+			// TODO: Error Handling
+            if (!strcmp(command, "maximize") == 0) {
                 toggle_maximize_window();
-            } else if (strcmp(command, "minimize")) {
+            } else if (!strcmp(command, "minimize")) {
                 /* TODO: Minimize */
-            } else if (strcmp(command, "close")) {
+            } else if (!strcmp(command, "close")) {
                 close_current_window();
-            } else if (strcmp(command, "config")) {
+            } else if (!strcmp(command, "config")) {
                 command = strtok(NULL, "");
-                if (strcmp(command, "border_width")) {
+                if (!strcmp(command, "border_width")) {
                     command = strtok(NULL, "");
-                    int width = atoi(strtok);
-                    config.border_width = width;
-                } else if(strcmp(command, "border_side")) {
+                    config.border_width = atoi(command);
+                } else if(!strcmp(command, "border_side")) {
                     enum position side;
                     command = strtok(NULL, "");
-                    if (command == "all") {
+                    if (!strcmp(command,"all")) {
                         side = ALL;
-                    } else if (command == "left") {
+                    } else if (!strcmp(command, "left")) {
                         side = LEFT;
-                    } else if (command == "right") {
+                    } else if (!strcmp(command, "right")) {
                         side = RIGHT;
-                    } else if (command == "top") {
+                    } else if (!strcmp(command, "top")) {
                         side = TOP;
-                    } else if (command == "bottom") {
+                    } else if (!strcmp(command, "bottom")) {
                         side = BOTTOM;
                     } else {
                         errx(EXIT_FAILURE, "chisai: invalid border side");
@@ -851,7 +851,7 @@ events_loop(void)
 	        xcb_get_geometry_reply_t geometry;
             struct client client;
 
-            while ((event = xcb_poll_for_event(connection))) {  
+            while ((event = xcb_poll_for_event(connection))) {
                 /* Make sure there is an event */
                 if (!event) {
                     continue;
@@ -877,11 +877,11 @@ events_loop(void)
                     } break;
 
                     case XCB_BUTTON_PRESS: {
-                        button_press(event, &client, &geometry, &values);
+                        button_press(event, &client, &geometry, values);
                     } break;
 
                     case XCB_MOTION_NOTIFY: {
-                        mouse_motion(&client, &geometry, &values);
+                        mouse_motion(&client, &geometry, values);
                     } break;
 
                     case XCB_BUTTON_RELEASE: {
