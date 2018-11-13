@@ -9,3 +9,9 @@ super + shift + {w, a, s, d, e}
 
 super + b + {0-9}
     maikuro config border_width {0-9}
+
+super + t
+    urxvt
+
+super + r
+    rofi
