@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=chisai
+Comment=Minimal, modular window manager
+Exec=chisai
+Type=application
